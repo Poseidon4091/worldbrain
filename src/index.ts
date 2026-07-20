@@ -65,3 +65,10 @@ export { embedText, embedBatch, EMBEDDING_DIM, type EmbeddingRouterType } from "
 
 // ── World CRUD ───────────────────────────────────────────────────────────────
 export { createWorldService, type WorldService } from "./services/lorebook/worldService.js";
+
+// ── Transactional write path (the only sanctioned checkpoint mutation) ───────
+export {
+  applyDeltaTransactional,
+  type ApplyDeltaOptions,
+  type ApplyDeltaResult,
+} from "./services/lorebook/worldWrite.js";

@@ -32,7 +32,14 @@ export function createWorldService(db: PrismaClient) {
     });
   }
 
-  async function saveCheckpoint(userId: string, worldId: string, checkpoint: unknown) {
+  /**
+   * Blind full-checkpoint overwrite. UNSAFE for normal writes: it has no row lock, so two callers
+   * that read-modify-write concurrently silently lose one side's entities. Use
+   * `applyDeltaTransactional` instead — it takes a delta and serializes writers.
+   *
+   * Retained only for restore/import flows, where clobbering the current checkpoint is the intent.
+   */
+  async function overwriteCheckpointUnsafe(userId: string, worldId: string, checkpoint: unknown) {
     const world = await get(userId, worldId);
     if (!world) return null;
     return db.lorebook.update({ where: { id: worldId }, data: { checkpoint: checkpoint as any } });
@@ -71,7 +78,7 @@ export function createWorldService(db: PrismaClient) {
     return db.lorebookCheckpoint.findMany({ where: { lorebookId: worldId }, orderBy: { createdAt: "desc" } });
   }
 
-  return { list, get, create, update, saveCheckpoint, remove, getItems, getCheckpoints };
+  return { list, get, create, update, overwriteCheckpointUnsafe, remove, getItems, getCheckpoints };
 }
 
 export type WorldService = ReturnType<typeof createWorldService>;
