@@ -8,6 +8,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "start": "node dist/server/index.js",
+    "dev": "tsx watch src/server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -16,11 +18,14 @@
     "db:push": "prisma db push"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/client": "^6.19.2",
+    "express": "^5.2.1",
     "jsonrepair": "^3.13.1",
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.0",
     "prisma": "^6.19.2",
     "tsx": "^4.19.0",

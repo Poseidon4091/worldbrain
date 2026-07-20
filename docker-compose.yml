@@ -1,0 +1,80 @@
+# worldbrain — Docker Compose deployment (Dokploy "Docker Compose" service type).
+#
+# Dokploy notes:
+#   - Set the variables below in Dokploy's Environment tab; they are NOT auto-injected into
+#     containers, which is why every one is referenced explicitly as ${VAR} here.
+#   - Leave the domain to Dokploy's Domains tab (point it at the `app` service, port 8080) rather
+#     than hand-writing Traefik labels — Dokploy generates them and they stay in sync with the UI.
+#   - `build:` requires the "Docker Compose" service type. Docker Stack (Swarm) does not support
+#     building; that would need a prebuilt image from a registry instead.
+#
+# Locally, `docker compose up -d db` is enough on its own to run the concurrency tests
+# (see src/services/lorebook/worldWrite.test.ts).
+
+services:
+  db:
+    # pgvector, NOT stock postgres. Embeddings live in vector(1024) columns, so the extension is
+    # a hard requirement — a stock postgres image fails on every embedding write.
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-worldbrain}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-worldbrain}
+    volumes:
+      # Named volume, not a host bind mount: Dokploy clears relative paths on redeploy (git clone
+      # wipes the directory) and manages named volumes for backups.
+      - worldbrain_db:/var/lib/postgresql/data
+    healthcheck:
+      # The app's boot runs `prisma db push`, which fails outright against a database that is not
+      # accepting connections yet — so the dependency below must gate on readiness, not just start.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-worldbrain} -d ${POSTGRES_DB:-worldbrain}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-worldbrain}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-worldbrain}
+      PORT: 8080
+      APP_URL: ${APP_URL:-http://localhost:8080}
+
+      # Provider defaults — these only SEED the settings row on first boot; afterwards the
+      # settings UI is authoritative and changing these has no effect (see server/settings.ts).
+      EMBEDDING_ROUTER: ${EMBEDDING_ROUTER:-openai}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      LLM_ROUTER: ${LLM_ROUTER:-openai}
+      LLM_MODEL: ${LLM_MODEL:-}
+
+      # API keys stay in env and are never written to the database or shown in the settings UI.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - internal
+      - dokploy-network
+
+volumes:
+  worldbrain_db:
+
+networks:
+  internal:
+  # Dokploy's shared network — how Traefik reaches the app container to serve the domain.
+  # Omit this (and the app's membership above) when running plain `docker compose` locally.
+  dokploy-network:
+    external: true
