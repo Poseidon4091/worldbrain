@@ -1,0 +1,147 @@
+// worldbrain — persistent world/context store.
+// Ported from Aria's lorebook subsystem, with all cross-model coupling (User, Chat, ChatGraph,
+// GraphLorebookRef, ChatSummary, LorebookSource, Message, MemoryEvent) stripped. Foreign-key
+// columns are kept as plain strings so callers can attach their own ownership/scoping model.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+/// Per-owner runtime configuration, edited through the settings UI and seeded from env on first
+/// boot. This is worldbrain's OWN settings model — not a port of Aria's — and exists so the daemon
+/// can be reconfigured (embedding provider, ingest model) without a restart or a redeploy.
+///
+/// In the default single-user deployment there is exactly one row, keyed by the fixed owner id.
+model Settings {
+  userId String @id
+
+  // Embedding provider used for indexing + query embedding.
+  embeddingEnabled Boolean @default(true)
+  embeddingRouter  String  @default("openai")
+  embeddingModel   String?
+
+  // LLM used by the ingest/extraction pass (OpenAI-compatible; see routerDispatch.ts).
+  llmRouter String  @default("openai")
+  llmModel  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+/// A world / lorebook: the top-level container for a persistent context store.
+model Lorebook {
+  id          String   @id @default(uuid())
+  userId      String
+  title       String
+  group       String?  @map("group_name")
+  tags        String[] @default([])
+  isReference Boolean  @default(false)
+  // When true: entries only inject when their tags are explicitly mentioned (tag-gated).
+  tagGated    Boolean  @default(false)
+  checkpoint  Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Free-form origin pointer (was ChatGraph relation in Aria).
+  sourceRef String? @unique
+
+  items       LorebookItem[]
+  checkpoints LorebookCheckpoint[]
+  memories    Memory[]
+
+  @@index([userId])
+  @@map("lorebooks")
+}
+
+/// Relational, embeddable projection of a lorebook's checkpoint entities (+ passages/canon).
+model LorebookItem {
+  id              String @id @default(uuid())
+  lorebookId      String
+  lorebook        Lorebook @relation(fields: [lorebookId], references: [id], onDelete: Cascade)
+  sourceId        String?
+  key             String // entity name / stable key
+  type            String // character, location, item, knowledge, event, rp_passage, chronology, ...
+  content         String // stringified rich content
+  importanceScore Float  @default(1.0)
+
+  // Canon position for temporally-gated retrieval.
+  canonBook    Int?
+  canonChapter Int?
+
+  embedding      Unsupported("vector(1024)")?
+  embeddingModel String?
+  embeddedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([lorebookId, key])
+  @@index([lorebookId])
+  @@index([sourceId])
+  @@map("lorebook_items")
+}
+
+/// Point-in-time snapshot of a lorebook's checkpoint JSON, keyed to an external message/event id.
+model LorebookCheckpoint {
+  id         String   @id @default(uuid())
+  lorebookId String
+  lorebook   Lorebook @relation(fields: [lorebookId], references: [id], onDelete: Cascade)
+  messageId  String // external anchor id (no Message relation in worldbrain)
+  data       Json
+  summary    String?
+  createdAt  DateTime @default(now())
+
+  @@index([lorebookId])
+  @@index([messageId])
+  @@map("lorebook_checkpoints")
+}
+
+/// Durable RAG memory facts. Retained for the ingest's memory-delta output + vector search.
+model Memory {
+  id               String    @id @default(uuid())
+  userId           String
+  chatId           String?
+  userProfileId    String?
+  ariaPersonaId    String?
+  lorebookId       String?
+  lorebook         Lorebook? @relation(fields: [lorebookId], references: [id])
+  kind             String    @default("fact")
+  status           String    @default("ACCEPTED")
+  content          String
+  confidence       Float?
+  reasoning        String?
+  sourceMessageIds String[]  @default([])
+  actualTags       Json      @default("[]")
+  suggestedTags    Json      @default("[]")
+  enabled          Boolean   @default(true)
+  nsfw             Boolean   @default(false)
+  isRoleplay       Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+  metadata         Json      @default("{}")
+
+  importanceScore  Float     @default(2.0)
+  referenceCount   Int       @default(1)
+  lastReferencedAt DateTime?
+  parentMemoryId   String?
+
+  embedding      Unsupported("vector(1024)")?
+  embeddingModel String?
+  embeddedAt     DateTime?
+
+  @@index([userId, kind])
+  @@index([userId, status])
+  @@index([chatId])
+  @@index([lorebookId])
+  @@map("memories")
+}
