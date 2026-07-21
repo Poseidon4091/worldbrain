@@ -1,7 +1,7 @@
-import { normalizeName } from "./lorebookMerge.js";
+import { normalizeName } from "./merge.js";
 
 /**
- * Bounded-memory lifecycle for lorebook checkpoints.
+ * Bounded-memory lifecycle for world checkpoints.
  *
  * Phase 2a — recency tracking. This module only RECORDS activity; it does not change
  * what gets injected or dropped. Later phases (chronology rollup, entity dormancy) read
@@ -30,7 +30,7 @@ export function buildActiveNameSet(names: Iterable<string | undefined | null>): 
  *   - preserves the prior `lastSeenTurn` for every other entity
  *
  * The prior stamp is recovered from the pre-merge `base` checkpoint by normalized name,
- * because applyLorebookDelta reconstructs entities and may not carry `lastSeenTurn` through.
+ * because applyDelta reconstructs entities and may not carry `lastSeenTurn` through.
  * Entities that were never stamped are backfilled to the current seq (a grace baseline) so
  * every entity carries recency going forward and can eventually be assessed for dormancy.
  *
@@ -93,7 +93,7 @@ export interface ChronologyRollupOptions {
  *
  * When the array exceeds `softCap`, the oldest entries (all but the most recent `keep`) are
  * compressed into a compact breadcrumb appended to `chronology_archive`, then dropped from the
- * active array. No detail is lost: those beats are still embedded as chronology lorebook_items
+ * active array. No detail is lost: those beats are still embedded as chronology world_items
  * and remain retrievable via RAG/DCI. The archive itself is length-bounded — once it exceeds
  * `maxArchiveChars`, its oldest (leading) text is trimmed, so it can't grow unbounded either.
  *

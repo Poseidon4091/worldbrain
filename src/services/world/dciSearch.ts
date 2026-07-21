@@ -1,8 +1,8 @@
 import type { PrismaClient } from "@prisma/client";
 import { createLogger } from "../../utils/logger.js";
-import type { SimilarLorebookItem } from "../embedding/vectorSearch.js";
+import type { SimilarWorldItem } from "../embedding/vectorSearch.js";
 
-const logger = createLogger("lorebook:dciSearch");
+const logger = createLogger("world:dciSearch");
 
 const REGEX_ESCAPE = /[.*+?^${}()|[\]\\]/g;
 
@@ -37,7 +37,7 @@ export function phraseAppearsInText(term: string, text: string): boolean {
  * A leading word boundary is still required, so "art" does NOT fire on "start" or "artist".
  *
  * This restores the inflection matches lost when tag-gating moved from raw substring `.includes()`
- * to strict word-boundary matching — strict boundaries silently stopped tag-gated lorebooks from
+ * to strict word-boundary matching — strict boundaries silently stopped tag-gated worlds from
  * triggering on plural references, leaving their content out of the prompt.
  */
 export function tagAppearsInText(tag: string, text: string): boolean {
@@ -251,7 +251,7 @@ export function nameAppearsInText(name: string, text: string): boolean {
 }
 
 /**
- * Identifies lorebook entities whose names (or aliases/nicknames) appear in the given text
+ * Identifies world entities whose names (or aliases/nicknames) appear in the given text
  * as standalone words. Used to determine which entities deserve full detail in the Librarian
  * context, to drive DCI resurfacing, and to refresh recency.
  *
@@ -285,7 +285,7 @@ export function extractMentionedEntities(text: string, checkpoint: any): Array<{
 }
 
 /**
- * Formats lorebook entities for the Librarian system prompt with DCI-aware prioritization.
+ * Formats world entities for the Librarian system prompt with DCI-aware prioritization.
  *
  * Strategy:
  *   - Core entities → always rendered in full (they always matter)
@@ -350,25 +350,25 @@ export function formatEntitiesForLibrarian(checkpoint: any, mentionedNames: Set<
 }
 
 /**
- * DCI exact-match lookup: queries the lorebook_items table by entity name.
+ * DCI exact-match lookup: queries the world_items table by entity name.
  *
- * The `key` column in lorebook_items stores the entity name verbatim (set by
- * lorebookItemSync.ts). A case-insensitive exact match on `key` guarantees
+ * The `key` column in world_items stores the entity name verbatim (set by
+ * itemSync.ts). A case-insensitive exact match on `key` guarantees
  * 100% recall for proper nouns that may fall below the vector similarity threshold
  * (unusual spellings, non-English names, short names with weak embeddings).
  *
- * Returns items shaped as SimilarLorebookItem so they can be appended directly
- * to the hybridLorebookSearch result list in buildPrompt.ts.
+ * Returns items shaped as SimilarWorldItem so they can be appended directly
+ * to the hybridSearch result list in buildPrompt.ts.
  */
 export async function dciLookupByNames(
   db: PrismaClient,
-  lorebookIds: string[],
+  worldIds: string[],
   names: string[],
   alreadyRetrievedKeys: Set<string> = new Set(),
-): Promise<(SimilarLorebookItem & { hybridScore: number })[]> {
-  if (lorebookIds.length === 0 || names.length === 0) return [];
+): Promise<(SimilarWorldItem & { hybridScore: number })[]> {
+  if (worldIds.length === 0 || names.length === 0) return [];
 
-  // Trim to match lorebookItemSync, which stores keys as `String(entity.name).trim()` —
+  // Trim to match itemSync, which stores keys as `String(entity.name).trim()` —
   // a whitespace-padded checkpoint name would otherwise never hit its own item row.
   const uniqueLower = [...new Set(names.map((n) => n.trim().toLowerCase()))].filter(
     (n) => n.length >= 3 && !alreadyRetrievedKeys.has(n),
@@ -383,7 +383,7 @@ export async function dciLookupByNames(
         key: string;
         type: string;
         content: string;
-        lorebookId: string;
+        worldId: string;
         importanceScore: number;
         embeddingModel: string | null;
         canonBook: number | null;
@@ -392,13 +392,13 @@ export async function dciLookupByNames(
       }>
     >(
       `
-      SELECT id, key, type, content, "lorebookId", "importanceScore",
+      SELECT id, key, type, content, "worldId", "importanceScore",
              "embeddingModel", "canonBook", "canonChapter", "createdAt"
-      FROM lorebook_items
-      WHERE "lorebookId" = ANY($1::text[])
+      FROM world_items
+      WHERE "worldId" = ANY($1::text[])
         AND lower(key) = ANY($2::text[])
       `,
-      lorebookIds,
+      worldIds,
       uniqueLower,
     );
 
@@ -420,20 +420,20 @@ export async function dciLookupByNames(
 
 /**
  * Convenience wrapper used by buildPrompt.ts:
- * Scans all active lorebook checkpoints to find entity names mentioned in the
+ * Scans all active world checkpoints to find entity names mentioned in the
  * user message, then runs dciLookupByNames to fetch their full DB records.
  *
- * Only returns items that weren't already retrieved by hybridLorebookSearch
+ * Only returns items that weren't already retrieved by hybridSearch
  * (deduplication by lowercase key).
  */
 export async function dciAugmentRetrievedItems(
   db: PrismaClient,
   userMessage: string,
-  lorebookIds: string[],
+  worldIds: string[],
   checkpoints: any[],
   alreadyRetrievedKeys: Set<string>,
-): Promise<(SimilarLorebookItem & { hybridScore: number })[]> {
-  if (!userMessage || lorebookIds.length === 0 || checkpoints.length === 0) return [];
+): Promise<(SimilarWorldItem & { hybridScore: number })[]> {
+  if (!userMessage || worldIds.length === 0 || checkpoints.length === 0) return [];
 
   const mentionedNames: string[] = [];
   for (const cp of checkpoints) {
@@ -444,5 +444,5 @@ export async function dciAugmentRetrievedItems(
 
   if (mentionedNames.length === 0) return [];
 
-  return dciLookupByNames(db, lorebookIds, mentionedNames, alreadyRetrievedKeys);
+  return dciLookupByNames(db, worldIds, mentionedNames, alreadyRetrievedKeys);
 }

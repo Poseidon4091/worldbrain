@@ -3,12 +3,12 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { env } from "../env.js";
 import { embedText } from "../services/embedding/index.js";
-import { hybridLorebookSearch, type SimilarLorebookItem } from "../services/embedding/vectorSearch.js";
+import { hybridSearch, type SimilarWorldItem } from "../services/embedding/vectorSearch.js";
 import { extractNarrativeDelta } from "../services/intelligence/narrativeIntelligence.js";
-import { dciLookupByNames } from "../services/lorebook/lorebookDciSearch.js";
-import type { LorebookCheckpoint, LorebookDelta } from "../services/lorebook/lorebookMerge.js";
-import { createWorldService } from "../services/lorebook/worldService.js";
-import { applyDeltaTransactional } from "../services/lorebook/worldWrite.js";
+import { dciLookupByNames } from "../services/world/dciSearch.js";
+import type { WorldCheckpoint, WorldDelta } from "../services/world/merge.js";
+import { createWorldService } from "../services/world/worldService.js";
+import { applyDeltaTransactional } from "../services/world/worldWrite.js";
 import type { RouterType } from "../services/llm/routerDispatch.js";
 import { createLogger } from "../utils/logger.js";
 import { getSettings } from "./settings.js";
@@ -80,10 +80,10 @@ export function createMcpServer(db: PrismaClient): McpServer {
     return (await worlds.list(userId)).map((w) => w.id);
   }
 
-  async function getCheckpoint(worldId: string): Promise<LorebookCheckpoint> {
+  async function getCheckpoint(worldId: string): Promise<WorldCheckpoint> {
     const world = await worlds.get(userId, worldId);
     if (!world) throw new Error(`World not found: ${worldId}`);
-    return (world.checkpoint as LorebookCheckpoint | null) ?? ({} as LorebookCheckpoint);
+    return (world.checkpoint as WorldCheckpoint | null) ?? ({} as WorldCheckpoint);
   }
 
   // ── worlds_list ────────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ export function createMcpServer(db: PrismaClient): McpServer {
     async () => {
       const all = await worlds.list(userId);
       const rows = all.map((w) => {
-        const cp = (w.checkpoint as LorebookCheckpoint | null) ?? ({} as LorebookCheckpoint);
+        const cp = (w.checkpoint as WorldCheckpoint | null) ?? ({} as WorldCheckpoint);
         return {
           id: w.id,
           title: w.title,
@@ -148,7 +148,7 @@ export function createMcpServer(db: PrismaClient): McpServer {
       // omitting it measurably degrades retrieval.
       const { embedding, model } = await embedText(query, settings.embeddingRouter, settings.embeddingModel, "query");
 
-      const hits = await hybridLorebookSearch(db, embedding, userId, worldIds, limit, undefined, null, model);
+      const hits = await hybridSearch(db, embedding, userId, worldIds, limit, undefined, null, model);
 
       // DCI: exact-name recall for proper nouns whose embeddings are weak (unusual spellings,
       // short names). Catches what vector search structurally misses.
@@ -159,10 +159,10 @@ export function createMcpServer(db: PrismaClient): McpServer {
 
       const text = all.map(renderItem).join("\n\n");
       return textResult(text, {
-        results: all.map((h: SimilarLorebookItem & { source: string }) => ({
+        results: all.map((h: SimilarWorldItem & { source: string }) => ({
           key: h.key,
           type: h.type,
-          worldId: h.lorebookId,
+          worldId: h.worldId,
           content: h.content,
           source: h.source,
         })),
@@ -190,7 +190,7 @@ export function createMcpServer(db: PrismaClient): McpServer {
       if (hits.length === 0) return textResult(`No entity named "${name}" found.`);
       return textResult(
         hits.map(renderItem).join("\n\n"),
-        { entities: hits.map((h) => ({ key: h.key, type: h.type, worldId: h.lorebookId, content: h.content })) },
+        { entities: hits.map((h) => ({ key: h.key, type: h.type, worldId: h.worldId, content: h.content })) },
       );
     },
   );
@@ -282,16 +282,16 @@ export function createMcpServer(db: PrismaClient): McpServer {
         router: settings.llmRouter as RouterType,
         model: settings.llmModel ?? "gpt-4o-mini",
         conversation: text,
-        currentLorebook: cp,
+        currentWorld: cp,
         tags: [],
       });
 
-      if (!extraction?.lorebook) {
+      if (!extraction?.world) {
         return textResult("Nothing durable was extracted from that text — nothing was recorded.");
       }
 
-      const lore = extraction.lorebook;
-      const delta: LorebookDelta = {
+      const lore = extraction.world;
+      const delta: WorldDelta = {
         add: lore.add ?? [],
         update: lore.update ?? [],
         new_rules: lore.new_rules ?? [],

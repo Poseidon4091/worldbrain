@@ -2,15 +2,15 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { createLogger } from "../../utils/logger.js";
-import { type EmbeddingRouterType, embedText, storeLorebookEmbedding } from "../embedding/index.js";
+import { type EmbeddingRouterType, embedText, storeItemEmbedding } from "../embedding/index.js";
 
-const logger = createLogger("lorebook:rpPassageSync");
+const logger = createLogger("world:passageSync");
 
 /** Target character count per passage chunk. Splits at message boundaries. */
 const CHUNK_SIZE = 1_500;
 
 /**
- * Max rp_passage rows to retain per lorebook. Passages accumulate on every extraction
+ * Max passage rows to retain per world. Passages accumulate on every extraction
  * and were previously never pruned — growing without bound for the lifetime of a chat.
  * At ~1,500 chars/chunk this cap keeps roughly the most recent ~600k chars of verbatim
  * RP available for retrieval. Older scenes are not lost from the story: the Librarian's
@@ -18,36 +18,36 @@ const CHUNK_SIZE = 1_500;
  * the oldest verbatim chunks trims redundant storage without erasing narrative history.
  * Deliberately generous — only very long-running chats ever reach it.
  */
-const RP_PASSAGE_RETENTION = 400;
+const PASSAGE_RETENTION = 400;
 
 /**
- * Deletes the oldest rp_passage rows for a lorebook beyond RP_PASSAGE_RETENTION,
+ * Deletes the oldest passage rows for a world beyond PASSAGE_RETENTION,
  * keeping the most recent ones. Best-effort — never throws.
  */
-async function pruneOldRpPassages(db: PrismaClient, lorebookId: string): Promise<void> {
+async function pruneOldPassages(db: PrismaClient, worldId: string): Promise<void> {
   try {
     const countRows = await db.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
       SELECT COUNT(*)::bigint AS count
-      FROM "lorebook_items"
-      WHERE "lorebookId" = ${lorebookId} AND "type" = 'rp_passage'
+      FROM "world_items"
+      WHERE "worldId" = ${worldId} AND "type" = 'passage'
     `);
     const total = Number(countRows[0]?.count ?? 0n);
-    if (total <= RP_PASSAGE_RETENTION) return;
+    if (total <= PASSAGE_RETENTION) return;
 
     const deleted = await db.$executeRaw(Prisma.sql`
-      DELETE FROM "lorebook_items"
-      WHERE "type" = 'rp_passage'
-        AND "lorebookId" = ${lorebookId}
+      DELETE FROM "world_items"
+      WHERE "type" = 'passage'
+        AND "worldId" = ${worldId}
         AND "id" NOT IN (
-          SELECT "id" FROM "lorebook_items"
-          WHERE "type" = 'rp_passage' AND "lorebookId" = ${lorebookId}
+          SELECT "id" FROM "world_items"
+          WHERE "type" = 'passage' AND "worldId" = ${worldId}
           ORDER BY "createdAt" DESC
-          LIMIT ${RP_PASSAGE_RETENTION}
+          LIMIT ${PASSAGE_RETENTION}
         )
     `);
-    logger.info("Pruned old RP passages", { lorebookId, deleted, retained: RP_PASSAGE_RETENTION });
+    logger.info("Pruned old RP passages", { worldId, deleted, retained: PASSAGE_RETENTION });
   } catch (err) {
-    logger.warn("RP passage prune failed — skipping", { lorebookId, err });
+    logger.warn("RP passage prune failed — skipping", { worldId, err });
   }
 }
 
@@ -56,7 +56,7 @@ async function pruneOldRpPassages(db: PrismaClient, lorebookId: string): Promise
  * Message table of its own. The chat/transcript store lives in whatever app or connector feeds
  * this engine, so the turns to index are passed in rather than queried out of a coupled schema.
  */
-export interface RpMessage {
+export interface TranscriptMessage {
   id: string;
   role: string;
   content: string;
@@ -69,7 +69,7 @@ export interface RpMessage {
  * truncated prefix, so distinct chunks can never collide under the ON CONFLICT DO NOTHING
  * insert (which would silently drop a passage). The key is stable, so re-runs stay idempotent.
  */
-function buildChunks(messages: RpMessage[]): Array<{ key: string; text: string }> {
+function buildChunks(messages: TranscriptMessage[]): Array<{ key: string; text: string }> {
   const chunks: Array<{ key: string; text: string }> = [];
   let currentText = "";
   let chunkKey = "";
@@ -103,18 +103,18 @@ function buildChunks(messages: RpMessage[]): Array<{ key: string; text: string }
  *
  * worldbrain stores only the external anchor id, not the message itself, so the caller resolves
  * this id to a timestamp (or an index) in whatever transcript store it owns and passes the turns
- * after that point to `syncRpPassages`.
+ * after that point to `syncPassages`.
  *
  * @param currentCheckpointMessageId  The messageId of the checkpoint just created.
  * @returns The previous checkpoint's messageId, or null if this is the first checkpoint.
  */
 export async function getPassageWatermark(
   db: PrismaClient,
-  lorebookId: string,
+  worldId: string,
   currentCheckpointMessageId: string,
 ): Promise<string | null> {
-  const previousCheckpoint = await db.lorebookCheckpoint.findFirst({
-    where: { lorebookId, messageId: { not: currentCheckpointMessageId } },
+  const previousCheckpoint = await db.worldCheckpoint.findFirst({
+    where: { worldId, messageId: { not: currentCheckpointMessageId } },
     orderBy: { createdAt: "desc" },
     select: { messageId: true },
   });
@@ -122,21 +122,21 @@ export async function getPassageWatermark(
 }
 
 /**
- * Chunks conversation turns into ~CHUNK_SIZE passages and stores them as `rp_passage`
- * lorebook_items. Safe to call multiple times — the `ON CONFLICT DO NOTHING` insert means
+ * Chunks conversation turns into ~CHUNK_SIZE passages and stores them as `passage`
+ * world_items. Safe to call multiple times — the `ON CONFLICT DO NOTHING` insert means
  * previously-chunked passages are skipped and only new ones are embedded, so an over-broad
  * `messages` window is harmless (just wasted work, never duplicates).
  *
  * Fires after a successful extraction pass. Use `getPassageWatermark` to determine which
  * turns are new.
  *
- * @param messages  The turns to chunk, in chronological order. Caller-supplied — see RpMessage.
+ * @param messages  The turns to chunk, in chronological order. Caller-supplied — see TranscriptMessage.
  */
-export async function syncRpPassages(
+export async function syncPassages(
   db: PrismaClient,
-  lorebookId: string,
+  worldId: string,
   userId: string,
-  messages: RpMessage[],
+  messages: TranscriptMessage[],
 ): Promise<void> {
   try {
     if (messages.length === 0) return;
@@ -144,7 +144,7 @@ export async function syncRpPassages(
     const chunks = buildChunks(messages);
     if (chunks.length === 0) return;
 
-    logger.info("Syncing RP passages", { lorebookId, chunkCount: chunks.length });
+    logger.info("Syncing RP passages", { worldId, chunkCount: chunks.length });
 
     const settings = await db.settings.findUnique({ where: { userId } });
     const embeddingEnabled = settings?.embeddingEnabled ?? false;
@@ -159,13 +159,13 @@ export async function syncRpPassages(
     for (const chunk of chunks) {
       // ON CONFLICT DO NOTHING — idempotent; skips any chunk already stored
       const rows = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-        INSERT INTO "lorebook_items" (
-          "id", "lorebookId", "key", "type", "content", "importanceScore", "createdAt", "updatedAt"
+        INSERT INTO "world_items" (
+          "id", "worldId", "key", "type", "content", "importanceScore", "createdAt", "updatedAt"
         )
         VALUES (
-          ${randomUUID()}, ${lorebookId}, ${chunk.key}, ${"rp_passage"}, ${chunk.text}, ${1}, NOW(), NOW()
+          ${randomUUID()}, ${worldId}, ${chunk.key}, ${"passage"}, ${chunk.text}, ${1}, NOW(), NOW()
         )
-        ON CONFLICT ("lorebookId", "key") DO NOTHING
+        ON CONFLICT ("worldId", "key") DO NOTHING
         RETURNING "id"
       `);
 
@@ -176,14 +176,14 @@ export async function syncRpPassages(
       if (embeddingEnabled) embedJobs.push({ itemId, text: chunk.text, key: chunk.key });
     }
 
-    logger.info("RP passage sync complete", { lorebookId, newChunks: newCount, total: chunks.length });
+    logger.info("RP passage sync complete", { worldId, newChunks: newCount, total: chunks.length });
 
     if (embedJobs.length > 0) {
       const EMBED_CONCURRENCY = 5;
       void mapWithConcurrency(embedJobs, EMBED_CONCURRENCY, async (job) => {
         try {
           const result = await embedText(job.text, router, model, "document");
-          await storeLorebookEmbedding(db, job.itemId, result.embedding, result.model);
+          await storeItemEmbedding(db, job.itemId, result.embedding, result.model);
         } catch (err) {
           logger.warn("Failed to embed RP passage", { itemId: job.itemId, key: job.key, err });
         }
@@ -192,9 +192,9 @@ export async function syncRpPassages(
 
     // Trim ancient verbatim passages beyond the retention cap. Only meaningful once new
     // chunks were actually added, so skip the query when nothing changed this turn.
-    if (newCount > 0) await pruneOldRpPassages(db, lorebookId);
+    if (newCount > 0) await pruneOldPassages(db, worldId);
   } catch (err) {
     // Never propagate — passage sync is best-effort
-    logger.error("RP passage sync failed", { lorebookId, err });
+    logger.error("RP passage sync failed", { worldId, err });
   }
 }

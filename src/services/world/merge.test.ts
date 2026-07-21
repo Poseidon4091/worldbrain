@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { applyLorebookDelta, type LorebookCheckpoint, type LorebookEntity } from "./lorebookMerge.js";
+import { applyDelta, type WorldCheckpoint, type WorldEntity } from "./merge.js";
 
-function emptyCheckpoint(overrides: Partial<LorebookCheckpoint> = {}): LorebookCheckpoint {
+function emptyCheckpoint(overrides: Partial<WorldCheckpoint> = {}): WorldCheckpoint {
   return {
     characters: [],
     locations: [],
@@ -13,11 +13,11 @@ function emptyCheckpoint(overrides: Partial<LorebookCheckpoint> = {}): LorebookC
   };
 }
 
-function char(name: string, blurb: string, extra: Partial<LorebookEntity> = {}): LorebookEntity {
+function char(name: string, blurb: string, extra: Partial<WorldEntity> = {}): WorldEntity {
   return { name, blurb, importance: "middle", ...extra };
 }
 
-describe("applyLorebookDelta — merge edge cases", () => {
+describe("applyDelta — merge edge cases", () => {
   it("#9 does not merge a bare first name into one of two same-first-name characters", () => {
     const cp = emptyCheckpoint({
       characters: [
@@ -26,7 +26,7 @@ describe("applyLorebookDelta — merge edge cases", () => {
       ],
     });
 
-    const result = applyLorebookDelta(cp, { add: [char("Harry", "ambiguous newcomer")], update: [] });
+    const result = applyDelta(cp, { add: [char("Harry", "ambiguous newcomer")], update: [] });
 
     // Neither existing character should be corrupted by the ambiguous bare "Harry".
     expect(result.characters.find((c) => c.name === "Harry Potter")?.blurb).toBe("The boy who lived");
@@ -38,7 +38,7 @@ describe("applyLorebookDelta — merge edge cases", () => {
   it("#9 regression: a bare first name still merges when there is exactly one match", () => {
     const cp = emptyCheckpoint({ characters: [char("Hermione Granger", "brightest witch of her age")] });
 
-    const result = applyLorebookDelta(cp, {
+    const result = applyDelta(cp, {
       add: [],
       update: [char("Hermione", "updated blurb", { status: "Alive" })],
     });
@@ -58,7 +58,7 @@ describe("applyLorebookDelta — merge edge cases", () => {
       ],
     });
 
-    const result = applyLorebookDelta(cp, { add: [], update: [] });
+    const result = applyDelta(cp, { add: [], update: [] });
 
     expect(result.characters.filter((c) => c.name === "Harry Osborn").length).toBe(1);
     expect(result.characters.some((c) => c.name === "Harry Potter")).toBe(true);
@@ -68,7 +68,7 @@ describe("applyLorebookDelta — merge edge cases", () => {
     const cp = emptyCheckpoint({
       characters: [char("Hermione Granger", "witch", { aliases: ["Mione"] })],
     });
-    const result = applyLorebookDelta(cp, {
+    const result = applyDelta(cp, {
       add: [],
       update: [char("Hermione Granger", "witch", { aliases: ["Herm", "Mione", "Hermione Granger"] })],
     });
@@ -84,7 +84,7 @@ describe("applyLorebookDelta — merge edge cases", () => {
     const cp = emptyCheckpoint({
       characters: [char("Narcissa", "witch", { exposure_tags: ["muggle_tech:soda_fountain"] })],
     });
-    const result = applyLorebookDelta(cp, {
+    const result = applyDelta(cp, {
       add: [],
       update: [char("Narcissa", "witch", { exposure_tags: ["muggle_tech:soda_fountain", "visited:cinema"] })],
     });
@@ -98,7 +98,7 @@ describe("applyLorebookDelta — merge edge cases", () => {
     const tenTags = Array.from({ length: 10 }, (_, i) => `tag${i + 1}`);
     const cp = emptyCheckpoint({ characters: [char("Bob", "a guy", { tags: [...tenTags] })] });
 
-    const result = applyLorebookDelta(cp, {
+    const result = applyDelta(cp, {
       add: [],
       update: [char("Bob", "a guy", { tags: [...tenTags, "freshtag"] })],
     });

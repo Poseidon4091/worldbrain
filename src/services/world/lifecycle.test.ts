@@ -6,7 +6,7 @@ import {
   rollupChronology,
   selectCoreFloor,
   stampRecency,
-} from "./lorebookLifecycle.js";
+} from "./lifecycle.js";
 
 const chron = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ timestamp: `t${i}`, summary: `event ${i}`, key_events: [] }));

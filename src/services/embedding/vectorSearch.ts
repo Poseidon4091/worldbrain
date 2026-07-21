@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
-import { tagAppearsInText } from "../lorebook/lorebookDciSearch.js";
+import { tagAppearsInText } from "../world/dciSearch.js";
 import { EMBEDDING_DIM } from "./embeddingService.js";
 
 // ───────────────── Memory Embedding Storage ─────────────────
@@ -50,7 +50,7 @@ export interface SimilarMemory {
   chatId: string | null;
   ariaPersonaId: string | null;
   userProfileId: string | null;
-  lorebookId: string | null;
+  worldId: string | null;
   createdAt: Date;
 }
 
@@ -68,7 +68,7 @@ export async function findSimilarMemories(
     chatId?: string;
     ariaPersonaId?: string;
     userProfileId?: string;
-    lorebookId?: string;
+    worldId?: string;
     memoryScope?: "GLOBAL" | "PERSONA" | "PERSONA_PROFILE";
     minSimilarity?: number;
     /** Model that produced the query embedding. Rows embedded by a DIFFERENT
@@ -128,9 +128,9 @@ export async function findSimilarMemories(
     }
     // If userProfileId is omitted, leave unconstrained (don't force IS NULL)
   }
-  if (filters?.lorebookId) {
-    conditions.push(`"lorebookId" = $${idx++}`);
-    params.push(filters.lorebookId);
+  if (filters?.worldId) {
+    conditions.push(`"worldId" = $${idx++}`);
+    params.push(filters.worldId);
   }
   if (filters?.embeddingModel) {
     conditions.push(`("embeddingModel" IS NULL OR "embeddingModel" = $${idx++})`);
@@ -156,7 +156,7 @@ export async function findSimilarMemories(
       "chatId",
       "ariaPersonaId",
       "userProfileId",
-      "lorebookId",
+      "worldId",
       "createdAt"
     FROM memories
     WHERE ${whereClause}
@@ -183,7 +183,7 @@ export async function hybridMemorySearch(
     chatId?: string;
     ariaPersonaId?: string;
     userProfileId?: string;
-    lorebookId?: string;
+    worldId?: string;
     memoryScope?: "GLOBAL" | "PERSONA" | "PERSONA_PROFILE";
     embeddingModel?: string;
   },
@@ -245,9 +245,9 @@ export async function countEmbeddedMemories(
   };
 }
 
-// ───────────────── Lorebook Item Embedding Storage ─────────────────
+// ───────────────── World Item Embedding Storage ─────────────────
 
-export async function storeLorebookEmbedding(
+export async function storeItemEmbedding(
   db: PrismaClient,
   itemId: string,
   embedding: number[],
@@ -259,7 +259,7 @@ export async function storeLorebookEmbedding(
 
   const vectorStr = `[${embedding.join(",")}]`;
   await db.$executeRaw`
-    UPDATE lorebook_items
+    UPDATE world_items
     SET embedding = ${vectorStr}::vector,
         "embeddingModel" = ${embeddingModel},
         "embeddedAt" = NOW()
@@ -267,52 +267,52 @@ export async function storeLorebookEmbedding(
   `;
 }
 
-export async function storeLorebookEmbeddingBatch(
+export async function storeItemEmbeddingBatch(
   db: PrismaClient,
   items: Array<{ itemId: string; embedding: number[]; embeddingModel: string }>,
 ): Promise<void> {
   for (const item of items) {
-    await storeLorebookEmbedding(db, item.itemId, item.embedding, item.embeddingModel);
+    await storeItemEmbedding(db, item.itemId, item.embedding, item.embeddingModel);
   }
 }
 
-// ───────────────── Lorebook Item Vector Search ─────────────────
+// ───────────────── World Item Vector Search ─────────────────
 
-export interface SimilarLorebookItem {
+export interface SimilarWorldItem {
   id: string;
   key: string;
   type: string;
   content: string;
   similarity: number;
   importanceScore: number;
-  lorebookId: string;
+  worldId: string;
   embeddingModel: string | null;
   canonBook: number | null;
   canonChapter: number | null;
   createdAt: Date;
 }
 
-export async function findSimilarLorebookItems(
+export async function findSimilarItems(
   db: PrismaClient,
   queryEmbedding: number[],
   userId: string,
-  lorebookIds: string[],
+  worldIds: string[],
   limit: number = 20,
   minSimilarity: number = 0.3,
   canonPosition?: { book: number; chapter?: number } | null,
   /** Model that produced the query embedding — see findSimilarMemories.filters.embeddingModel. */
   embeddingModel?: string | null,
-): Promise<SimilarLorebookItem[]> {
+): Promise<SimilarWorldItem[]> {
   if (queryEmbedding.length !== EMBEDDING_DIM) {
     throw new Error(`Query embedding dimension mismatch: expected ${EMBEDDING_DIM}, got ${queryEmbedding.length}`);
   }
-  if (lorebookIds.length === 0) return [];
+  if (worldIds.length === 0) return [];
 
   const vectorStr = `[${queryEmbedding.join(",")}]`;
 
   let canonClause = "";
   let modelClause = "";
-  const params: unknown[] = [vectorStr, userId, lorebookIds, minSimilarity, limit];
+  const params: unknown[] = [vectorStr, userId, worldIds, minSimilarity, limit];
   if (embeddingModel) {
     const modelParam = `$${params.length + 1}`;
     params.push(embeddingModel);
@@ -330,7 +330,7 @@ export async function findSimilarLorebookItems(
     }
   }
 
-  const results = await db.$queryRawUnsafe<SimilarLorebookItem[]>(
+  const results = await db.$queryRawUnsafe<SimilarWorldItem[]>(
     `
     SELECT
       li.id,
@@ -339,15 +339,15 @@ export async function findSimilarLorebookItems(
       li.content,
       1 - (li.embedding <=> $1::vector) AS similarity,
       li."importanceScore" AS "importanceScore",
-      li."lorebookId",
+      li."worldId",
       li."embeddingModel" AS "embeddingModel",
       li."canonBook" AS "canonBook",
       li."canonChapter" AS "canonChapter",
       li."createdAt"
-    FROM lorebook_items li
-    JOIN lorebooks l ON li."lorebookId" = l.id
+    FROM world_items li
+    JOIN worlds l ON li."worldId" = l.id
     WHERE l."userId" = $2
-      AND li."lorebookId" = ANY($3::text[])
+      AND li."worldId" = ANY($3::text[])
       AND li.embedding IS NOT NULL
       AND 1 - (li.embedding <=> $1::vector) >= $4
       ${modelClause}
@@ -361,11 +361,11 @@ export async function findSimilarLorebookItems(
   return results;
 }
 
-export async function hybridLorebookSearch(
+export async function hybridSearch(
   db: PrismaClient,
   queryEmbedding: number[],
   userId: string,
-  lorebookIds: string[],
+  worldIds: string[],
   limit: number = 20,
   weights?: {
     similarity?: number;
@@ -374,16 +374,16 @@ export async function hybridLorebookSearch(
   },
   canonPosition?: { book: number; chapter?: number } | null,
   embeddingModel?: string | null,
-): Promise<(SimilarLorebookItem & { hybridScore: number })[]> {
+): Promise<(SimilarWorldItem & { hybridScore: number })[]> {
   const wSim = weights?.similarity ?? 0.6;
   const wImp = weights?.importance ?? 0.3;
   const wRec = weights?.recency ?? 0.1;
 
-  const candidates = await findSimilarLorebookItems(
+  const candidates = await findSimilarItems(
     db,
     queryEmbedding,
     userId,
-    lorebookIds,
+    worldIds,
     limit * 2,
     0.2,
     canonPosition,
@@ -394,18 +394,18 @@ export async function hybridLorebookSearch(
 
   const maxImportance = Math.max(...candidates.map((c) => c.importanceScore ?? 1), 1);
   const now = Date.now();
-  const maxAgeMs = 180 * 24 * 60 * 60 * 1000; // 6 months for lorebook items
+  const maxAgeMs = 180 * 24 * 60 * 60 * 1000; // 6 months for world items
 
   const scored = candidates.map((c) => {
     const normalizedImportance = (c.importanceScore ?? 1) / maxImportance;
     const ageMs = now - new Date(c.createdAt).getTime();
     const recencyScore = Math.max(0, 1 - ageMs / maxAgeMs);
 
-    // Anti-self-echo penalty: rp_passages created within the last 90 minutes are from the
+    // Anti-self-echo penalty: passages created within the last 90 minutes are from the
     // current session. Scoring them at full similarity means the LLM's own recent output
     // immediately becomes its top context and gets echoed back. Apply a 0.25 penalty to
-    // very-recent rp_passages so established earlier context can compete.
-    const isVeryRecentRpPassage = (c as any).type === "rp_passage" && ageMs < 90 * 60 * 1000;
+    // very-recent passages so established earlier context can compete.
+    const isVeryRecentRpPassage = (c as any).type === "passage" && ageMs < 90 * 60 * 1000;
     const selfEchoPenalty = isVeryRecentRpPassage ? 0.25 : 0;
 
     const hybridScore = wSim * c.similarity + wImp * normalizedImportance + wRec * recencyScore - selfEchoPenalty;
@@ -418,27 +418,27 @@ export async function hybridLorebookSearch(
 }
 
 /**
- * Tag-gated lorebook retrieval: mirrors the pre-RAG tag-trigger system.
+ * Tag-gated world retrieval: mirrors the pre-RAG tag-trigger system.
  *
  * Behavior (matches old system exactly):
  *   1. Entry-level match: if any entry's tags appear in the user message, return those
- *      specific entries — entry tag wins over the lorebook-level tag.
- *   2. Lorebook-level match: if no entry tags matched but the lorebook's own tags appear
- *      in the user message, return all entries (entire lorebook is in scope this turn).
+ *      specific entries — entry tag wins over the world-level tag.
+ *   2. World-level match: if no entry tags matched but the world's own tags appear
+ *      in the user message, return all entries (entire world is in scope this turn).
  *   3. No match: return nothing.
  *
- * Used for in-world item lorebooks (e.g. a research notebook) where characters should
+ * Used for in-world item worlds (e.g. a research notebook) where characters should
  * only reference content they have been explicitly shown, not semantic inferences.
  */
-export async function tagGatedLorebookSearch(
+export async function tagGatedSearch(
   db: PrismaClient,
   userMessage: string,
-  lorebook: { id: string; tags: string[] },
-): Promise<{ lorebookId: string; key: string; type: string; content: string }[]> {
-  // Fetch all items for this lorebook (tag-gated lorebooks are typically small).
+  world: { id: string; tags: string[] },
+): Promise<{ worldId: string; key: string; type: string; content: string }[]> {
+  // Fetch all items for this world (tag-gated worlds are typically small).
   // Tags are stored inside the content JSON field (not a separate column).
-  const rawItems = await db.lorebookItem.findMany({
-    where: { lorebookId: lorebook.id },
+  const rawItems = await db.worldItem.findMany({
+    where: { worldId: world.id },
     select: { key: true, type: true, content: true },
   });
 
@@ -465,21 +465,21 @@ export async function tagGatedLorebookSearch(
 
   if (entryMatches.length > 0) {
     return entryMatches.map((item) => ({
-      lorebookId: lorebook.id,
+      worldId: world.id,
       key: item.key,
       type: item.type,
       content: item.content ?? "",
     }));
   }
 
-  // Step 2: lorebook-level tag match → entire lorebook is in scope this turn
-  const lorebookTagMatched = lorebook.tags.some(
+  // Step 2: world-level tag match → entire world is in scope this turn
+  const worldTagMatched = world.tags.some(
     (tag) => tag.trim().length > 0 && tagAppearsInText(tag, userMessage),
   );
 
-  if (lorebookTagMatched) {
+  if (worldTagMatched) {
     return items.map((item) => ({
-      lorebookId: lorebook.id,
+      worldId: world.id,
       key: item.key,
       type: item.type,
       content: item.content ?? "",

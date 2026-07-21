@@ -1,14 +1,14 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { applyDeltaTransactional } from "./worldWrite.js";
-import type { LorebookDelta } from "./lorebookMerge.js";
+import type { WorldDelta } from "./merge.js";
 
 /**
  * Concurrency tests for the transactional write path.
  *
  * These need a REAL Postgres — the whole point is that `SELECT ... FOR UPDATE` serializes two
  * overlapping transactions, which no mock or in-memory fake reproduces. The unit tests in
- * lorebookMerge.test.ts already cover the merge itself; what breaks under concurrency is the
+ * merge.test.ts already cover the merge itself; what breaks under concurrency is the
  * *composition* of read + merge + write, and only a live database exercises that.
  *
  * Skipped unless DATABASE_URL is set. Run with:
@@ -23,7 +23,7 @@ describeWithDb("applyDeltaTransactional (requires Postgres)", () => {
   let worldId: string;
 
   beforeAll(async () => {
-    const world = await db.lorebook.create({
+    const world = await db.world.create({
       data: {
         userId,
         title: "Concurrency Test World",
@@ -34,11 +34,11 @@ describeWithDb("applyDeltaTransactional (requires Postgres)", () => {
   });
 
   afterAll(async () => {
-    await db.lorebook.deleteMany({ where: { userId } });
+    await db.world.deleteMany({ where: { userId } });
     await db.$disconnect();
   });
 
-  const entityDelta = (name: string): LorebookDelta => ({
+  const entityDelta = (name: string): WorldDelta => ({
     add: [{ name, blurb: `${name} exists.`, importance: "middle" }],
     update: [],
   });
@@ -52,7 +52,7 @@ describeWithDb("applyDeltaTransactional (requires Postgres)", () => {
       applyDeltaTransactional(db, userId, worldId, entityDelta("Writer B Entity"), { skipSync: true }),
     ]);
 
-    const world = await db.lorebook.findUniqueOrThrow({ where: { id: worldId } });
+    const world = await db.world.findUniqueOrThrow({ where: { id: worldId } });
     const names = ((world.checkpoint as any).characters ?? []).map((c: any) => c.name);
 
     expect(names).toContain("Writer A Entity");
@@ -60,7 +60,7 @@ describeWithDb("applyDeltaTransactional (requires Postgres)", () => {
   });
 
   it("advances the extraction sequence exactly once per write", async () => {
-    const before = await db.lorebook.findUniqueOrThrow({ where: { id: worldId } });
+    const before = await db.world.findUniqueOrThrow({ where: { id: worldId } });
     const seqBefore = (before.checkpoint as any)._extractionSeq ?? 0;
 
     const N = 5;
@@ -70,7 +70,7 @@ describeWithDb("applyDeltaTransactional (requires Postgres)", () => {
       ),
     );
 
-    const after = await db.lorebook.findUniqueOrThrow({ where: { id: worldId } });
+    const after = await db.world.findUniqueOrThrow({ where: { id: worldId } });
     // Serialized writers each see the previous one's seq, so N concurrent writes advance by
     // exactly N. If any two shared a base checkpoint, this lands short — the same failure that
     // loses entities, caught as an off-by-N.
@@ -82,7 +82,7 @@ describeWithDb("applyDeltaTransactional (requires Postgres)", () => {
       applyDeltaTransactional(db, "someone-else", worldId, entityDelta("Trespasser"), { skipSync: true }),
     ).rejects.toThrow(/not found/i);
 
-    const world = await db.lorebook.findUniqueOrThrow({ where: { id: worldId } });
+    const world = await db.world.findUniqueOrThrow({ where: { id: worldId } });
     const names = ((world.checkpoint as any).characters ?? []).map((c: any) => c.name);
     expect(names).not.toContain("Trespasser");
   });

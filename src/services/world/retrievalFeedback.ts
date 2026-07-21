@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { createLogger } from "../../utils/logger.js";
 
-const logger = createLogger("lorebook:retrievalFeedback");
+const logger = createLogger("world:retrievalFeedback");
 
 // How much to nudge importanceScore per feedback signal. Small deltas prevent
 // over-tuning on noisy turns. Score is clamped to [1.0, 3.0].
@@ -11,7 +11,7 @@ const SCORE_MIN = 1.0;
 const SCORE_MAX = 3.0;
 
 /**
- * Adjusts importanceScore on lorebook items based on retrieval vs Director outcome.
+ * Adjusts importanceScore on world items based on retrieval vs Director outcome.
  *
  * - Retrieved AND Director-spotlighted  → small boost (entity is relevant and the model agrees)
  * - Retrieved AND Director-ignored      → small decay (entity was fetched but deemed irrelevant)
@@ -21,19 +21,19 @@ const SCORE_MAX = 3.0;
  */
 export async function applyRetrievalFeedback(
   db: PrismaClient,
-  lorebookId: string,
+  worldId: string,
   retrievalAudit:
     | {
-        lorebookHits?: Array<{ lorebookId: string; key: string; similarity: number }>;
+        worldHits?: Array<{ worldId: string; key: string; similarity: number }>;
       }
     | undefined,
   directorEntities: Array<{ key: string; relevance?: number; action?: string }> | undefined,
 ): Promise<void> {
-  if (!retrievalAudit?.lorebookHits?.length || !directorEntities?.length) return;
+  if (!retrievalAudit?.worldHits?.length || !directorEntities?.length) return;
 
   try {
-    // Only consider hits from the story lorebook (not referenced lorebooks)
-    const hits = retrievalAudit.lorebookHits.filter((h) => h.lorebookId === lorebookId);
+    // Only consider hits from the story world (not referenced worlds)
+    const hits = retrievalAudit.worldHits.filter((h) => h.worldId === worldId);
     if (hits.length === 0) return;
 
     const directorMap = new Map(directorEntities.map((e) => [e.key, e]));
@@ -55,9 +55,9 @@ export async function applyRetrievalFeedback(
     if (boostKeys.length === 0 && decayKeys.length === 0) return;
 
     // Fetch current scores in one query
-    const items = await db.lorebookItem.findMany({
+    const items = await db.worldItem.findMany({
       where: {
-        lorebookId,
+        worldId,
         key: { in: [...boostKeys, ...decayKeys] },
       },
       select: { id: true, key: true, importanceScore: true },
@@ -67,7 +67,7 @@ export async function applyRetrievalFeedback(
       const isBoost = boostKeys.includes(item.key);
       const delta = isBoost ? BOOST_DELTA : -DECAY_DELTA;
       const newScore = Math.min(SCORE_MAX, Math.max(SCORE_MIN, (item.importanceScore ?? 2) + delta));
-      return db.lorebookItem.update({
+      return db.worldItem.update({
         where: { id: item.id },
         data: { importanceScore: newScore },
       });
@@ -76,11 +76,11 @@ export async function applyRetrievalFeedback(
     await Promise.all(updates);
 
     logger.debug("Retrieval feedback applied", {
-      lorebookId,
+      worldId,
       boosted: boostKeys.length,
       decayed: decayKeys.length,
     });
   } catch (err) {
-    logger.warn("Retrieval feedback failed — skipping", { lorebookId, err });
+    logger.warn("Retrieval feedback failed — skipping", { worldId, err });
   }
 }

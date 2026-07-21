@@ -7,7 +7,7 @@ import {
   type MemoryForXml,
   requestJson,
 } from "../llm/structuredRequest.js";
-import { extractMentionedEntities, formatEntitiesForLibrarian } from "../lorebook/lorebookDciSearch.js";
+import { extractMentionedEntities, formatEntitiesForLibrarian } from "../world/dciSearch.js";
 import { type UnifiedExtractionResult, unifiedExtractionSchema } from "./types.js";
 
 const logger = createLogger("intelligence:narrativeIntelligence");
@@ -26,7 +26,7 @@ export interface NarrativeIntelligenceInput {
    *  Kept separate from `conversation` so the RP system prompt's injected entity blurbs
    *  don't pollute the mention scan. Falls back to `conversation` when omitted. */
   mentionScanText?: string;
-  currentLorebook?: any;
+  currentWorld?: any;
   userProfile?: { name?: string | null; description?: string | null } | null;
   ariaPersona?: { name?: string | null; summary?: string | null; content?: string | null } | null;
   tags: Array<{ name: string; description?: string | null }>;
@@ -38,7 +38,7 @@ export interface NarrativeIntelligenceInput {
   conversationTokens?: number;
   messageCount?: number;
   scanMode?: string;
-  connectedLorebooks?: Array<{
+  connectedWorlds?: Array<{
     title: string;
     tags: string[];
     characters: string[];
@@ -60,9 +60,9 @@ export interface NarrativeIntelligenceInput {
 export const extractNarrativeDelta = async (
   input: NarrativeIntelligenceInput,
 ): Promise<UnifiedExtractionResult | null> => {
-  const { currentLorebook: cp } = input;
+  const { currentWorld: cp } = input;
 
-  // 1. Prepare Lorebook context
+  // 1. Prepare World context
   // DCI-enhanced entity formatting: entities mentioned in the conversation get full detail;
   // core entities always get full detail; everything else gets a brief stub.
   // This replaces the old bulk-build + 10,000-char hard truncation — the Librarian now
@@ -103,7 +103,7 @@ export const extractNarrativeDelta = async (
   const existingChronology = `${chronologyArchiveLine}${recentChronology}`.trim() || "None yet";
 
   const connectedLoreContext =
-    (input.connectedLorebooks ?? [])
+    (input.connectedWorlds ?? [])
       .map(
         (lb) =>
           `[BOOK: ${lb.title}] (Tags: ${(lb.tags || []).join(", ")}) Chars: ${lb.characters.join(", ")}; Locs: ${lb.locations.join(", ")}; Items: ${lb.items.join(", ")}`,
@@ -140,7 +140,7 @@ export const extractNarrativeDelta = async (
           "",
           "--- CONTINUITY CONSTRAINTS — DECEASED CHARACTERS ---",
           "The following characters are CONFIRMED DEAD. Do NOT create chronology entries, status updates,",
-          "or any lorebook changes that portray them as alive. If their name appears in a passage, treat it",
+          "or any world changes that portray them as alive. If their name appears in a passage, treat it",
           "as a flashback, memory, or continuity error — never as a present-tense event.",
           ...deceasedCharacters,
         ]
@@ -170,8 +170,8 @@ export const extractNarrativeDelta = async (
     ...contextBlocks,
     ...directorHintsBlock,
     "",
-    "--- EXISTING LOREBOOK CONTEXT ---",
-    "EXISTING LOREBOOK ENTITIES:",
+    "--- EXISTING WORLD CONTEXT ---",
+    "EXISTING WORLD ENTITIES:",
     existingLoreEntities,
     "",
     "EXISTING CHRONOLOGY:",
@@ -244,8 +244,8 @@ export const extractNarrativeDelta = async (
     router: input.router,
     model: input.model,
     usage: result.usage,
-    lorebookAddCount: result.data?.lorebook?.add?.length ?? 0,
-    lorebookUpdateCount: result.data?.lorebook?.update?.length ?? 0,
+    worldAddCount: result.data?.world?.add?.length ?? 0,
+    worldUpdateCount: result.data?.world?.update?.length ?? 0,
     chronologyCount: result.data?.chronology?.length ?? 0,
     memoriesCount: result.data?.memories?.length ?? 0,
   });

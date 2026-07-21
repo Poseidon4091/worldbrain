@@ -1,7 +1,7 @@
 /** Tunable limits for the worldbrain framework (ported subset from Aria's config/limits). */
 
 /** Max related chronology/relationship entries folded into merge/embedding context. */
-export const LOREBOOK_RELATED_MAX = 15;
+export const RELATED_ENTRIES_MAX = 15;
 
 /** Max chars of an entity's fixedContent folded into its embedding text. */
 export const EMBEDDING_FIXED_CONTENT_MAX_CHARS = 400;

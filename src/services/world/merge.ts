@@ -1,13 +1,13 @@
-import { LOREBOOK_RELATED_MAX } from "../../config/limits.js";
+import { RELATED_ENTRIES_MAX } from "../../config/limits.js";
 /**
- * lorebookMerge.ts
+ * merge.ts
  *
  * Server-side merge logic for Lorekeeper delta updates.
  * Handles: deduplication (fuzzy name match), importance promotion,
  * chronology append, and safe merging without ever deleting existing entries.
  */
 
-export interface LorebookEntity {
+export interface WorldEntity {
   name: string;
   blurb: string;
   importance: "core" | "middle" | "minor";
@@ -25,16 +25,16 @@ export interface LorebookEntity {
    *  Injected so they react with familiarity instead of first-time wonder on repeat encounters. */
   exposure_tags?: string[];
   /** Extraction sequence at which this entity was last active (mentioned/updated/present).
-   *  Populated by lorebookLifecycle.stampRecency. Consumed by the bounded-memory lifecycle
+   *  Populated by lifecycle.stampRecency. Consumed by the bounded-memory lifecycle
    *  (chronology rollup / entity dormancy) to decide what has gone cold. */
   lastSeenTurn?: number;
 }
 
-export interface LorebookDelta {
-  add: LorebookEntity[];
-  update: LorebookEntity[];
+export interface WorldDelta {
+  add: WorldEntity[];
+  update: WorldEntity[];
   /** MICRO: Discrete narrative beats/events */
-  new_memories?: LorebookEntity[];
+  new_memories?: WorldEntity[];
   /** MACRO: Rolling 'Story Thus Far' */
   narrative_summary?: string;
   chronology_entry?: {
@@ -59,28 +59,28 @@ export interface LorebookDelta {
   world_laws?: string[];
 }
 
-export interface LorebookCheckpoint {
-  characters: LorebookEntity[];
-  locations: LorebookEntity[];
-  items: LorebookEntity[];
+export interface WorldCheckpoint {
+  characters: WorldEntity[];
+  locations: WorldEntity[];
+  items: WorldEntity[];
   rules: Array<{ name: string; blurb: string; tags?: string[]; importance?: string }>;
   plot_threads: Array<{ title: string; status: string }>;
   chronology: Array<{ timestamp?: string; summary: string; key_events: string[]; present_characters?: string[] }>;
   /** Rolling compressed breadcrumb of chronology beats that have been pruned from the active
    *  `chronology` array to keep it bounded. Full detail of pruned beats remains retrievable via
-   *  RAG (they're embedded as chronology lorebook_items). Maintained by lorebookLifecycle.rollupChronology. */
+   *  RAG (they're embedded as chronology world_items). Maintained by lifecycle.rollupChronology. */
   chronology_archive?: string;
-  knowledge?: LorebookEntity[];
-  events?: LorebookEntity[];
+  knowledge?: WorldEntity[];
+  events?: WorldEntity[];
   /** Macro-summary: Story Thus Far */
   summary?: string;
   /** Micro-memories: Specific beats */
-  memories?: LorebookEntity[];
+  memories?: WorldEntity[];
   scene?: { location: string; present_characters: string[]; activity: string; mood: string };
   atmosphere?: string;
   world_laws?: string[];
   /** Monotonic extraction counter, incremented once per persisted extraction pass.
-   *  The unit of "recency" for the bounded-memory lifecycle (see LorebookEntity.lastSeenTurn). */
+   *  The unit of "recency" for the bounded-memory lifecycle (see WorldEntity.lastSeenTurn). */
   _extractionSeq?: number;
 }
 
@@ -158,7 +158,7 @@ function levenshtein(a: string, b: string): number {
  * Finds an existing entity in the list that fuzzy-matches the given name.
  * Returns index or -1 if no match found.
  */
-function findFuzzyMatch(list: LorebookEntity[], name: string): number {
+function findFuzzyMatch(list: WorldEntity[], name: string): number {
   if (!name) return -1;
   const norm = normalizeName(name);
   if (!norm) return -1;
@@ -229,9 +229,9 @@ function findFuzzyMatch(list: LorebookEntity[], name: string): number {
  * e.g. minor -> middle is allowed, middle -> minor is ignored.
  */
 function promoteImportance(
-  current: LorebookEntity["importance"],
-  incoming: LorebookEntity["importance"],
-): LorebookEntity["importance"] {
+  current: WorldEntity["importance"],
+  incoming: WorldEntity["importance"],
+): WorldEntity["importance"] {
   const currentRank = IMPORTANCE_RANK[current] ?? 1;
   const incomingRank = IMPORTANCE_RANK[incoming] ?? 1;
   return incomingRank > currentRank ? incoming : current;
@@ -516,7 +516,7 @@ function cleanTraits(current: string[] = [], incoming: string[] = [], tombstoned
     }
   }
 
-  return final.slice(0, LOREBOOK_RELATED_MAX);
+  return final.slice(0, RELATED_ENTRIES_MAX);
 }
 
 /**
@@ -528,11 +528,11 @@ function cleanTraits(current: string[] = [], incoming: string[] = [], tombstoned
  * - Never deletes unmentioned entries
  */
 function mergeEntities(
-  existing: LorebookEntity[],
-  toAdd: LorebookEntity[],
-  toUpdate: LorebookEntity[],
-): LorebookEntity[] {
-  const merged: LorebookEntity[] = [...existing];
+  existing: WorldEntity[],
+  toAdd: WorldEntity[],
+  toUpdate: WorldEntity[],
+): WorldEntity[] {
+  const merged: WorldEntity[] = [...existing];
 
   // Process updates first (targets known existing entries)
   for (const delta of toUpdate) {
@@ -553,7 +553,7 @@ function mergeEntities(
       if (incomingStatus?.toLowerCase().startsWith("update,")) incomingStatus = incomingStatus.slice(7).trim();
 
       // Death is irreversible — never let a subsequent extraction pass resurrect a character.
-      // Flashback passages or alive-Fred rp_passages can fool the LLM into overwriting "Deceased".
+      // Flashback passages or alive-Fred passages can fool the LLM into overwriting "Deceased".
       if (
         /\b(dead|deceased|killed|died)\b/i.test(current.status ?? "") &&
         !/\b(dead|deceased|killed|died)\b/i.test(incomingStatus ?? "")
@@ -641,7 +641,7 @@ function mergeEntities(
   // repeat "Harry Osborn" survived. Tracking every index and matching exact-normalized names
   // first closes that gap.
   const seen = new Map<string, number[]>(); // firstToken -> result indices sharing it
-  const result: LorebookEntity[] = [];
+  const result: WorldEntity[] = [];
 
   const isFuzzyDup = (norm: string, existingNorm: string): boolean => {
     const shorterNorm = norm.length < existingNorm.length ? norm : existingNorm;
@@ -750,15 +750,15 @@ function isChronologyDuplicate(existing: Array<{ summary: string }>, incoming: {
 }
 
 /**
- * Apply a Lorekeeper delta to an existing lorebook checkpoint.
+ * Apply a Lorekeeper delta to an existing world checkpoint.
  * Returns the new merged checkpoint. Original is not mutated.
  */
-export function applyLorebookDelta(checkpoint: LorebookCheckpoint, delta: LorebookDelta): LorebookCheckpoint {
+export function applyDelta(checkpoint: WorldCheckpoint, delta: WorldDelta): WorldCheckpoint {
   if (!delta) return checkpoint;
 
   // Split delta entries by entity_type field (cast needed since types come from extractor)
-  const allAdd = (delta.add ?? []) as Array<LorebookEntity & { entity_type?: string }>;
-  const allUpdate = (delta.update ?? []) as Array<LorebookEntity & { entity_type?: string }>;
+  const allAdd = (delta.add ?? []) as Array<WorldEntity & { entity_type?: string }>;
+  const allUpdate = (delta.update ?? []) as Array<WorldEntity & { entity_type?: string }>;
 
   // Use a helper to check type since the LLM might have used 'type' before our Zod fix
   const isType = (e: any, target: string) => {
@@ -834,7 +834,7 @@ export function applyLorebookDelta(checkpoint: LorebookCheckpoint, delta: Lorebo
   // Append new discrete memories — deduplicated by normalized name (first 80 chars of summary as fallback)
   const newMemories = [...(checkpoint.memories ?? [])];
   if (delta.new_memories && Array.isArray(delta.new_memories)) {
-    const memoryKey = (m: LorebookEntity) =>
+    const memoryKey = (m: WorldEntity) =>
       (m.name ?? m.blurb ?? "")
         .toLowerCase()
         .replace(/[^a-z0-9 ]/g, " ")

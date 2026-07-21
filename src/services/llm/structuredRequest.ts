@@ -112,7 +112,7 @@ export const requestJson = async <T extends z.ZodTypeAny>(
             parsed = parsed[0];
           } else if (parsed.length > 1 && typeof parsed[0] === "object" && parsed[0] !== null) {
             // Multi-element flat array of entities — the model returned just the characters
-            // list without the outer {lorebook:{add:[]}} wrapper. Normalize to {characters:[...]}
+            // list without the outer {world:{add:[]}} wrapper. Normalize to {characters:[...]}
             // so the unifiedExtractionSchema normalizer can reshape it.
             parsed = { characters: parsed };
           }

@@ -5,7 +5,7 @@ import {
   nameAppearsInText,
   phraseAppearsInText,
   tagAppearsInText,
-} from "./lorebookDciSearch.js";
+} from "./dciSearch.js";
 
 // ── nameAppearsInText ────────────────────────────────────────────────────────
 
@@ -190,7 +190,7 @@ describe("dciAugmentRetrievedItems", () => {
           key: r.key,
           type: "character",
           content: `${r.key} content`,
-          lorebookId: "lb-1",
+          worldId: "lb-1",
           importanceScore: 1,
           embeddingModel: null,
           canonBook: null,
@@ -235,7 +235,7 @@ describe("dciAugmentRetrievedItems", () => {
     expect(queriedNames).toContain("zephyrine");
   });
 
-  it("returns nothing when no lorebook entity is mentioned", async () => {
+  it("returns nothing when no world entity is mentioned", async () => {
     const db = mockDb([]);
     const result = await dciAugmentRetrievedItems(
       db,

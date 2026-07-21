@@ -1,22 +1,22 @@
 /**
  * worldbrain — public API surface.
  *
- * The lorebook framework extracted from Aria, un-coupled and repurposed as a standalone,
+ * The world framework extracted from Aria, un-coupled and repurposed as a standalone,
  * embeddings-backed, MCP-ready persistent world/context store. See docs/00_plan.md.
  */
 
 // ── Retrieval (vector + hybrid + tag-gated) ──────────────────────────────────
 export {
-  findSimilarLorebookItems,
-  hybridLorebookSearch,
-  tagGatedLorebookSearch,
+  findSimilarItems,
+  hybridSearch,
+  tagGatedSearch,
   findSimilarMemories,
   hybridMemorySearch,
-  storeLorebookEmbedding,
-  storeLorebookEmbeddingBatch,
+  storeItemEmbedding,
+  storeItemEmbeddingBatch,
   storeMemoryEmbedding,
   countEmbeddedMemories,
-  type SimilarLorebookItem,
+  type SimilarWorldItem,
   type SimilarMemory,
 } from "./services/embedding/vectorSearch.js";
 
@@ -29,16 +29,16 @@ export {
   nameAppearsInText,
   phraseAppearsInText,
   tagAppearsInText,
-} from "./services/lorebook/lorebookDciSearch.js";
+} from "./services/world/dciSearch.js";
 
 // ── Merge engine (delta application, dedup, fuzzy matching) ───────────────────
 export {
-  applyLorebookDelta,
+  applyDelta,
   normalizeName,
-  type LorebookCheckpoint,
-  type LorebookDelta,
-  type LorebookEntity,
-} from "./services/lorebook/lorebookMerge.js";
+  type WorldCheckpoint,
+  type WorldDelta,
+  type WorldEntity,
+} from "./services/world/merge.js";
 
 // ── Bounded-memory lifecycle (recency, rollup, dormancy) ─────────────────────
 export {
@@ -49,12 +49,12 @@ export {
   buildActiveNameSet,
   nextExtractionSeq,
   DEFAULT_DORMANCY_THRESHOLD,
-} from "./services/lorebook/lorebookLifecycle.js";
+} from "./services/world/lifecycle.js";
 
 // ── Sync (checkpoint → relational items + embeddings; RP passage chunking) ───
-export { syncLorebookItemsAndEmbed } from "./services/lorebook/lorebookItemSync.js";
-export { syncRpPassages, getPassageWatermark, type RpMessage } from "./services/lorebook/rpPassageSync.js";
-export { applyRetrievalFeedback } from "./services/lorebook/retrievalFeedback.js";
+export { syncWorldItemsAndEmbed } from "./services/world/itemSync.js";
+export { syncPassages, getPassageWatermark, type TranscriptMessage } from "./services/world/passageSync.js";
+export { applyRetrievalFeedback } from "./services/world/retrievalFeedback.js";
 
 // ── Self-updating ingest (LLM extraction → delta) ────────────────────────────
 export { extractNarrativeDelta } from "./services/intelligence/narrativeIntelligence.js";
@@ -64,11 +64,11 @@ export { unifiedExtractionSchema, type UnifiedExtractionResult } from "./service
 export { embedText, embedBatch, EMBEDDING_DIM, type EmbeddingRouterType } from "./services/embedding/index.js";
 
 // ── World CRUD ───────────────────────────────────────────────────────────────
-export { createWorldService, type WorldService } from "./services/lorebook/worldService.js";
+export { createWorldService, type WorldService } from "./services/world/worldService.js";
 
 // ── Transactional write path (the only sanctioned checkpoint mutation) ───────
 export {
   applyDeltaTransactional,
   type ApplyDeltaOptions,
   type ApplyDeltaResult,
-} from "./services/lorebook/worldWrite.js";
+} from "./services/world/worldWrite.js";

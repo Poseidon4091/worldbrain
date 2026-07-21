@@ -38,7 +38,7 @@ OpenRouter / OpenAI / any OpenAI-compatible endpoint, configured in the UI.
 `00_plan.md` §6 assumes writes go through "`applyLorebookDelta` + the transactional row-locked write
 we hardened." Only the first half was ported. What exists today:
 
-- `applyLorebookDelta` — a **pure** function: `(checkpoint, delta) => checkpoint`.
+- `applyLorebookDelta` (now `applyDelta`) — a **pure** function: `(checkpoint, delta) => checkpoint`.
 - `worldService.saveCheckpoint` — a **plain, unguarded** `UPDATE`.
 
 Nothing composes read → merge → write atomically. The resulting lost-update race:
@@ -173,19 +173,19 @@ API keys stay in env only — a settings UI with no auth must never render them 
 
 ## 7. Naming
 
-The engine is no longer lorebook-specific. Renaming before the first migration exists, while it is
+The engine is no longer world-specific. Renaming before the first migration exists, while it is
 free:
 
 | Current | New |
 |---|---|
-| `Lorebook` / `lorebooks` | `World` / `worlds` |
-| `LorebookItem` / `lorebook_items` | `WorldItem` / `world_items` |
-| `LorebookCheckpoint` / `lorebook_checkpoints` | `WorldCheckpoint` / `world_checkpoints` |
-| `lorebookId` | `worldId` |
-| `rp_passage` item type | `passage` |
-| `services/lorebook/` | `services/world/` |
-| `applyLorebookDelta` | `applyDelta` |
-| `hybridLorebookSearch` | `hybridSearch` |
+| `World` / `worlds` | `World` / `worlds` |
+| `WorldItem` / `world_items` | `WorldItem` / `world_items` |
+| `WorldCheckpoint` / `world_checkpoints` | `WorldCheckpoint` / `world_checkpoints` |
+| `worldId` | `worldId` |
+| `passage` item type | `passage` |
+| `services/world/` | `services/world/` |
+| `applyDelta` | `applyDelta` |
+| `hybridSearch` | `hybridSearch` |
 | "Librarian" (comments) | "extractor" |
 
 `Memory` keeps its name. DCI keeps its name — it is a specific retrieval technique, not narrative

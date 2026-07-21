@@ -3,20 +3,20 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { createLogger } from "../../utils/logger.js";
-import { type EmbeddingRouterType, embedText, storeLorebookEmbedding } from "../embedding/index.js";
-import { phraseAppearsInText } from "./lorebookDciSearch.js";
+import { type EmbeddingRouterType, embedText, storeItemEmbedding } from "../embedding/index.js";
+import { phraseAppearsInText } from "./dciSearch.js";
 
-const logger = createLogger("lorebook:sync");
+const logger = createLogger("world:sync");
 
-async function upsertLorebookItem(
+async function upsertWorldItem(
   db: PrismaClient,
-  lorebookId: string,
+  worldId: string,
   key: string,
   type: string,
   content: string,
   importanceScore: number,
 ): Promise<string> {
-  // Prisma's model upsert is currently tripping Postgres binary bind errors on lorebook_items.
+  // Prisma's model upsert is currently tripping Postgres binary bind errors on world_items.
   // Using a direct SQL upsert avoids that protocol path.
   //
   // importanceScore is SEEDED on insert but deliberately NOT overwritten on conflict.
@@ -27,9 +27,9 @@ async function upsertLorebookItem(
   // not this column, so preserving the learned score does not affect which entities are
   // force-injected — only their vector-search ranking weight.
   const rows = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-    INSERT INTO "lorebook_items" (
+    INSERT INTO "world_items" (
       "id",
-      "lorebookId",
+      "worldId",
       "key",
       "type",
       "content",
@@ -39,7 +39,7 @@ async function upsertLorebookItem(
     )
     VALUES (
       ${randomUUID()},
-      ${lorebookId},
+      ${worldId},
       ${key},
       ${type},
       ${content},
@@ -47,7 +47,7 @@ async function upsertLorebookItem(
       NOW(),
       NOW()
     )
-    ON CONFLICT ("lorebookId", "key")
+    ON CONFLICT ("worldId", "key")
     DO UPDATE SET
       "type" = EXCLUDED."type",
       "content" = EXCLUDED."content",
@@ -56,17 +56,17 @@ async function upsertLorebookItem(
   `);
 
   if (!rows[0]?.id) {
-    throw new Error(`Lorebook item upsert did not return an id for key "${key}"`);
+    throw new Error(`World item upsert did not return an id for key "${key}"`);
   }
 
   return rows[0].id;
 }
 
 /**
- * Synchronizes a merged Lorebook checkpoint (JSON) into relational LorebookItem models
+ * Synchronizes a merged World checkpoint (JSON) into relational WorldItem models
  * in the database, and asynchronously generates/updates their vector embeddings if enabled.
  */
-export async function syncLorebookItemsAndEmbed(db: PrismaClient, lorebookId: string, checkpoint: any, userId: string) {
+export async function syncWorldItemsAndEmbed(db: PrismaClient, worldId: string, checkpoint: any, userId: string) {
   try {
     const settings = await db.settings.findUnique({ where: { userId } });
     const embeddingEnabled = settings?.embeddingEnabled ?? false;
@@ -102,7 +102,7 @@ export async function syncLorebookItemsAndEmbed(db: PrismaClient, lorebookId: st
 
     if (entities.length === 0) return;
 
-    logger.info(`Starting LorebookItem sync`, { lorebookId, count: entities.length, embeddingEnabled });
+    logger.info(`Starting WorldItem sync`, { worldId, count: entities.length, embeddingEnabled });
 
     // Track which item keys are active so we can clean up stale ones
     const activeKeys = new Set<string>();
@@ -198,7 +198,7 @@ export async function syncLorebookItemsAndEmbed(db: PrismaClient, lorebookId: st
       if (entity.importance === "minor") importanceNum = 1;
 
       try {
-        const itemId = await upsertLorebookItem(db, lorebookId, key, entity.type, storedContent, importanceNum);
+        const itemId = await upsertWorldItem(db, worldId, key, entity.type, storedContent, importanceNum);
 
         // Queue embedding (use embedContent plain text, not storedContent JSON). Runs
         // post-loop through a bounded pool rather than firing immediately per entity.
@@ -207,8 +207,8 @@ export async function syncLorebookItemsAndEmbed(db: PrismaClient, lorebookId: st
         }
       } catch (err) {
         hadSyncErrors = true;
-        logger.error("Failed to upsert LorebookItem", {
-          lorebookId,
+        logger.error("Failed to upsert WorldItem", {
+          worldId,
           key,
           type: entity.type,
           importanceScore: importanceNum,
@@ -225,15 +225,15 @@ export async function syncLorebookItemsAndEmbed(db: PrismaClient, lorebookId: st
       void mapWithConcurrency(embedJobs, EMBED_CONCURRENCY, async (job) => {
         try {
           const result = await embedText(job.embedContent, router, model, "document");
-          await storeLorebookEmbedding(db, job.itemId, result.embedding, result.model);
+          await storeItemEmbedding(db, job.itemId, result.embedding, result.model);
         } catch (err) {
-          logger.warn("Failed to embed LorebookItem", { itemId: job.itemId, key: job.key, err });
+          logger.warn("Failed to embed WorldItem", { itemId: job.itemId, key: job.key, err });
         }
       });
     }
 
     if (hadSyncErrors) {
-      logger.warn("Skipping LorebookItem deletion because sync had upsert errors", { lorebookId });
+      logger.warn("Skipping WorldItem deletion because sync had upsert errors", { worldId });
       return;
     }
 
@@ -241,12 +241,12 @@ export async function syncLorebookItemsAndEmbed(db: PrismaClient, lorebookId: st
     // it's VERY likely the checkpoint passed in was corrupted or stripped (e.g. by a RAG bug).
     // We skip deletion in this case to protect the user's data.
     if (activeKeys.size === 0) {
-      const existingCount = await db.lorebookItem.count({ where: { lorebookId } });
+      const existingCount = await db.worldItem.count({ where: { worldId } });
       if (existingCount > 0) {
         logger.warn(
           "Sync encountered 0 entities in checkpoint but items exist in DB. Skipping deletion to prevent data loss.",
           {
-            lorebookId,
+            worldId,
           },
         );
         return;
@@ -254,23 +254,23 @@ export async function syncLorebookItemsAndEmbed(db: PrismaClient, lorebookId: st
     }
 
     // Optional: Soft-delete or hard-delete items that no longer exist in the checkpoint.
-    // Passage types (rp_passage, canon_passage, compendium) are managed independently
+    // Passage types (passage, canon_passage, compendium) are managed independently
     // and must never be deleted by checkpoint sync.
-    const itemsToDelete = await db.lorebookItem.findMany({
+    const itemsToDelete = await db.worldItem.findMany({
       where: {
-        lorebookId,
+        worldId,
         key: { notIn: Array.from(activeKeys) },
-        type: { notIn: ["rp_passage", "canon_passage", "compendium"] },
+        type: { notIn: ["passage", "canon_passage", "compendium"] },
       },
     });
 
     if (itemsToDelete.length > 0) {
-      await db.lorebookItem.deleteMany({
+      await db.worldItem.deleteMany({
         where: { id: { in: itemsToDelete.map((i: any) => i.id) } },
       });
-      logger.info(`Deleted stale LorebookItems during sync`, { count: itemsToDelete.length });
+      logger.info(`Deleted stale WorldItems during sync`, { count: itemsToDelete.length });
     }
   } catch (err) {
-    logger.error("Failed to sync and embed LorebookItems", { lorebookId, err });
+    logger.error("Failed to sync and embed WorldItems", { worldId, err });
   }
 }

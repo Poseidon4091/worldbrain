@@ -110,7 +110,7 @@ export function normalizeExtractionOutput(data: any) {
         importanceScore: 3,
         confidence: 0.9,
       });
-      // Also push to lorebook knowledge entities (populates Research tab)
+      // Also push to world knowledge entities
       add.push({
         name: r,
         blurb: r,
@@ -128,7 +128,7 @@ export function normalizeExtractionOutput(data: any) {
         importanceScore: 3,
         confidence: 0.9,
       });
-      // Also push to lorebook knowledge entities (populates Research tab)
+      // Also push to world knowledge entities
       add.push({
         name,
         blurb,
@@ -181,7 +181,7 @@ export function normalizeExtractionOutput(data: any) {
     ...data,
     chronology,
     memories,
-    lorebook: {
+    world: {
       add: finalAdd,
       update: finalUpdate,
       new_rules: loreSource.new_rules ?? data.new_rules ?? [],

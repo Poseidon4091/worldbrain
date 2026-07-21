@@ -2,15 +2,15 @@ export type { EmbeddingMode, EmbeddingProvider, EmbeddingResult, EmbeddingRouter
 export { EMBEDDING_DIM, embedBatch, embedText, getEmbeddingProvider, validateEmbedding } from "./embeddingService.js";
 export {
   countEmbeddedMemories,
-  findSimilarLorebookItems,
+  findSimilarItems,
   findSimilarMemories,
-  hybridLorebookSearch,
+  hybridSearch,
   hybridMemorySearch,
-  type SimilarLorebookItem,
+  type SimilarWorldItem,
   type SimilarMemory,
-  storeLorebookEmbedding,
-  storeLorebookEmbeddingBatch,
+  storeItemEmbedding,
+  storeItemEmbeddingBatch,
   storeMemoryEmbedding,
   storeMemoryEmbeddingBatch,
-  tagGatedLorebookSearch,
+  tagGatedSearch,
 } from "./vectorSearch.js";

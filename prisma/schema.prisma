@@ -1,5 +1,5 @@
 // worldbrain — persistent world/context store.
-// Ported from Aria's lorebook subsystem, with all cross-model coupling (User, Chat, ChatGraph,
+// Ported from Aria's world subsystem, with all cross-model coupling (User, Chat, ChatGraph,
 // GraphLorebookRef, ChatSummary, LorebookSource, Message, MemoryEvent) stripped. Foreign-key
 // columns are kept as plain strings so callers can attach their own ownership/scoping model.
 
@@ -37,8 +37,8 @@ model Settings {
   @@map("settings")
 }
 
-/// A world / lorebook: the top-level container for a persistent context store.
-model Lorebook {
+/// A world / world: the top-level container for a persistent context store.
+model World {
   id          String   @id @default(uuid())
   userId      String
   title       String
@@ -54,22 +54,22 @@ model Lorebook {
   // Free-form origin pointer (was ChatGraph relation in Aria).
   sourceRef String? @unique
 
-  items       LorebookItem[]
-  checkpoints LorebookCheckpoint[]
+  items       WorldItem[]
+  checkpoints WorldCheckpoint[]
   memories    Memory[]
 
   @@index([userId])
-  @@map("lorebooks")
+  @@map("worlds")
 }
 
-/// Relational, embeddable projection of a lorebook's checkpoint entities (+ passages/canon).
-model LorebookItem {
+/// Relational, embeddable projection of a world's checkpoint entities (+ passages/canon).
+model WorldItem {
   id              String @id @default(uuid())
-  lorebookId      String
-  lorebook        Lorebook @relation(fields: [lorebookId], references: [id], onDelete: Cascade)
+  worldId      String
+  world        World @relation(fields: [worldId], references: [id], onDelete: Cascade)
   sourceId        String?
   key             String // entity name / stable key
-  type            String // character, location, item, knowledge, event, rp_passage, chronology, ...
+  type            String // character, location, item, knowledge, event, passage, chronology, ...
   content         String // stringified rich content
   importanceScore Float  @default(1.0)
 
@@ -84,25 +84,25 @@ model LorebookItem {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([lorebookId, key])
-  @@index([lorebookId])
+  @@unique([worldId, key])
+  @@index([worldId])
   @@index([sourceId])
-  @@map("lorebook_items")
+  @@map("world_items")
 }
 
-/// Point-in-time snapshot of a lorebook's checkpoint JSON, keyed to an external message/event id.
-model LorebookCheckpoint {
+/// Point-in-time snapshot of a world's checkpoint JSON, keyed to an external message/event id.
+model WorldCheckpoint {
   id         String   @id @default(uuid())
-  lorebookId String
-  lorebook   Lorebook @relation(fields: [lorebookId], references: [id], onDelete: Cascade)
+  worldId String
+  world   World @relation(fields: [worldId], references: [id], onDelete: Cascade)
   messageId  String // external anchor id (no Message relation in worldbrain)
   data       Json
   summary    String?
   createdAt  DateTime @default(now())
 
-  @@index([lorebookId])
+  @@index([worldId])
   @@index([messageId])
-  @@map("lorebook_checkpoints")
+  @@map("world_checkpoints")
 }
 
 /// Durable RAG memory facts. Retained for the ingest's memory-delta output + vector search.
@@ -112,8 +112,8 @@ model Memory {
   chatId           String?
   userProfileId    String?
   ariaPersonaId    String?
-  lorebookId       String?
-  lorebook         Lorebook? @relation(fields: [lorebookId], references: [id])
+  worldId       String?
+  world         World? @relation(fields: [worldId], references: [id])
   kind             String    @default("fact")
   status           String    @default("ACCEPTED")
   content          String
@@ -142,6 +142,6 @@ model Memory {
   @@index([userId, kind])
   @@index([userId, status])
   @@index([chatId])
-  @@index([lorebookId])
+  @@index([worldId])
   @@map("memories")
 }

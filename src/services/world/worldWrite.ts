@@ -1,21 +1,21 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { createLogger } from "../../utils/logger.js";
-import { syncLorebookItemsAndEmbed } from "./lorebookItemSync.js";
+import { syncWorldItemsAndEmbed } from "./itemSync.js";
 import {
   buildActiveNameSet,
   type ChronologyRollupOptions,
   nextExtractionSeq,
   rollupChronology,
   stampRecency,
-} from "./lorebookLifecycle.js";
-import { applyLorebookDelta, type LorebookCheckpoint, type LorebookDelta } from "./lorebookMerge.js";
+} from "./lifecycle.js";
+import { applyDelta, type WorldCheckpoint, type WorldDelta } from "./merge.js";
 
 const logger = createLogger("world:write");
 
 /**
  * The ONLY sanctioned way to mutate a world's checkpoint.
  *
- * `applyLorebookDelta` is a pure function and `worldService.saveCheckpoint` is an unguarded
+ * `applyDelta` is a pure function and `worldService.saveCheckpoint` is an unguarded
  * UPDATE; composing them in caller code produces a lost-update race:
  *
  *     Writer A            Writer B
@@ -33,7 +33,7 @@ const logger = createLogger("world:write");
  * Holding the row lock across the read and the write closes the window.
  */
 
-const EMPTY_CHECKPOINT: LorebookCheckpoint = {
+const EMPTY_CHECKPOINT: WorldCheckpoint = {
   characters: [],
   locations: [],
   items: [],
@@ -72,7 +72,7 @@ export interface ApplyDeltaOptions {
 }
 
 /** Every entity name the delta touches — the default "active this pass" set. */
-function namesFromDelta(delta: LorebookDelta): string[] {
+function namesFromDelta(delta: WorldDelta): string[] {
   return [
     ...(delta.add ?? []).map((e) => e?.name),
     ...(delta.update ?? []).map((e) => e?.name),
@@ -82,7 +82,7 @@ function namesFromDelta(delta: LorebookDelta): string[] {
 }
 
 export interface ApplyDeltaResult {
-  checkpoint: LorebookCheckpoint;
+  checkpoint: WorldCheckpoint;
   /** Extraction sequence this write was stamped with. */
   seq: number;
 }
@@ -106,7 +106,7 @@ export async function applyDeltaTransactional(
   db: PrismaClient,
   userId: string,
   worldId: string,
-  delta: LorebookDelta,
+  delta: WorldDelta,
   opts: ApplyDeltaOptions = {},
 ): Promise<ApplyDeltaResult> {
   const result = await db.$transaction(async (tx) => {
@@ -116,7 +116,7 @@ export async function applyDeltaTransactional(
     // FOR UPDATE is the whole point: it blocks any other writer for this world until we commit,
     // so the checkpoint we merge onto is guaranteed to still be current when we write it back.
     const rows = await tx.$queryRaw<Array<{ id: string; userId: string; checkpoint: unknown }>>(
-      Prisma.sql`SELECT id, "userId", checkpoint FROM lorebooks WHERE id = ${worldId} FOR UPDATE`,
+      Prisma.sql`SELECT id, "userId", checkpoint FROM worlds WHERE id = ${worldId} FOR UPDATE`,
     );
 
     const row = rows[0];
@@ -125,15 +125,15 @@ export async function applyDeltaTransactional(
     // the lock would race with a concurrent ownership change.
     if (row.userId !== userId) throw new Error(`World not found: ${worldId}`);
 
-    const base = (row.checkpoint as LorebookCheckpoint | null) ?? EMPTY_CHECKPOINT;
+    const base = (row.checkpoint as WorldCheckpoint | null) ?? EMPTY_CHECKPOINT;
     const seq = nextExtractionSeq(base);
 
-    const merged = applyLorebookDelta(base, delta);
+    const merged = applyDelta(base, delta);
     const activeNames = buildActiveNameSet(opts.activeNames ?? namesFromDelta(delta));
     const stamped = stampRecency(merged, base, activeNames, seq);
     const next = rollupChronology(stamped, opts.chronologyRollup);
 
-    await tx.lorebook.update({
+    await tx.world.update({
       where: { id: worldId },
       data: { checkpoint: next as unknown as Prisma.InputJsonValue },
     });
@@ -141,9 +141,9 @@ export async function applyDeltaTransactional(
     // Audit snapshot, written in the same transaction so it can never disagree with the live
     // checkpoint it claims to record.
     if (opts.checkpointMessageId) {
-      await tx.lorebookCheckpoint.create({
+      await tx.worldCheckpoint.create({
         data: {
-          lorebookId: worldId,
+          worldId: worldId,
           messageId: opts.checkpointMessageId,
           data: next as unknown as Prisma.InputJsonValue,
           summary: typeof next.summary === "string" ? next.summary : null,
@@ -161,10 +161,10 @@ export async function applyDeltaTransactional(
     updated: delta.update?.length ?? 0,
   });
 
-  // Outside the transaction — see the doc comment. Best-effort by design: syncLorebookItemsAndEmbed
+  // Outside the transaction — see the doc comment. Best-effort by design: syncWorldItemsAndEmbed
   // swallows its own errors, and the checkpoint (the source of truth) is already committed.
   if (!opts.skipSync) {
-    await syncLorebookItemsAndEmbed(db, worldId, result.checkpoint, userId);
+    await syncWorldItemsAndEmbed(db, worldId, result.checkpoint, userId);
   }
 
   return result;

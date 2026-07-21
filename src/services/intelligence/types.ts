@@ -166,7 +166,14 @@ const intelligenceMemoryActionSchema = z.object({
   confidence: z.number().min(0).max(1).default(1),
 });
 
-// Unified extraction result
+// Unified extraction result.
+//
+// DO NOT RENAME the `lorebook` / `lorebook_updates` keys below. They are not internal naming —
+// they are tolerated INPUT shapes for whatever wrapper an LLM happens to emit. The extraction
+// prompt asks for root-level `characters` / `timeline` / `research`, but models frequently wrap
+// their output, and these aliases absorb that. Renaming them does not raise an error: the schema
+// simply stops matching and normalizeExtraction falls through to an empty delta, so extraction
+// silently returns nothing. The normalized OUTPUT key is `world` (see normalizeExtraction.ts).
 export const unifiedExtractionSchema = z
   .object({
     lorebook: z
