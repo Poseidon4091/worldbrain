@@ -34,7 +34,7 @@ USER node
 
 EXPOSE 8080
 
-# Schema is pushed at boot so a fresh database is usable without a manual step. `db push` is
-# stated deliberately: no migration history exists yet (see docs/01_architecture.md §9). Once
-# migrations exist this must become `prisma migrate deploy`, which is safe against real data.
-CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/server/index.js"]
+# `migrate deploy` applies pending migrations only, and never resets or drops data — the one
+# Prisma command that is safe to run unattended on every container start. (It replaced `db push`,
+# which infers changes by diffing and can silently drop a column to make the database match.)
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server/index.js"]
