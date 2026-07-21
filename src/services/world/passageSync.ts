@@ -13,7 +13,7 @@ const CHUNK_SIZE = 1_500;
  * Max passage rows to retain per world. Passages accumulate on every extraction
  * and were previously never pruned — growing without bound for the lifetime of a chat.
  * At ~1,500 chars/chunk this cap keeps roughly the most recent ~600k chars of verbatim
- * RP available for retrieval. Older scenes are not lost from the story: the Librarian's
+ * RP available for retrieval. Older scenes are not lost from the story: the extractor's
  * chronology/summary in the checkpoint is the durable long-term memory layer, so pruning
  * the oldest verbatim chunks trims redundant storage without erasing narrative history.
  * Deliberately generous — only very long-running chats ever reach it.

@@ -80,20 +80,6 @@ describe("applyDelta — merge edge cases", () => {
     expect(h.aliases!.some((a) => a.toLowerCase() === "hermione granger")).toBe(false);
   });
 
-  it("4b accumulates exposure_tags across extractions without duplicates", () => {
-    const cp = emptyCheckpoint({
-      characters: [char("Narcissa", "witch", { exposure_tags: ["muggle_tech:soda_fountain"] })],
-    });
-    const result = applyDelta(cp, {
-      add: [],
-      update: [char("Narcissa", "witch", { exposure_tags: ["muggle_tech:soda_fountain", "visited:cinema"] })],
-    });
-    const n = result.characters.find((c) => c.name === "Narcissa")!;
-    expect(n.exposure_tags).toContain("muggle_tech:soda_fountain");
-    expect(n.exposure_tags).toContain("visited:cinema");
-    expect(n.exposure_tags!.filter((t) => t === "muggle_tech:soda_fountain")).toHaveLength(1);
-  });
-
   it("#11 lets a genuinely new tag enter an entity already at the tag cap", () => {
     const tenTags = Array.from({ length: 10 }, (_, i) => `tag${i + 1}`);
     const cp = emptyCheckpoint({ characters: [char("Bob", "a guy", { tags: [...tenTags] })] });

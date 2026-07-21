@@ -47,9 +47,6 @@ export interface SimilarMemory {
   similarity: number;
   importanceScore: number;
   kind: string;
-  chatId: string | null;
-  ariaPersonaId: string | null;
-  userProfileId: string | null;
   worldId: string | null;
   createdAt: Date;
 }
@@ -65,11 +62,7 @@ export async function findSimilarMemories(
   userId: string,
   limit: number = 20,
   filters?: {
-    chatId?: string;
-    ariaPersonaId?: string;
-    userProfileId?: string;
     worldId?: string;
-    memoryScope?: "GLOBAL" | "PERSONA" | "PERSONA_PROFILE";
     minSimilarity?: number;
     /** Model that produced the query embedding. Rows embedded by a DIFFERENT
      *  model are excluded — cosine distance across embedding spaces is
@@ -103,31 +96,6 @@ export async function findSimilarMemories(
     `embedding IS NOT NULL`,
   ];
 
-  if (filters?.chatId) {
-    conditions.push(`"chatId" = $${idx++}`);
-    params.push(filters.chatId);
-  }
-  if (filters?.memoryScope === "GLOBAL") {
-    conditions.push(`"ariaPersonaId" IS NULL`);
-    conditions.push(`"userProfileId" IS NULL`);
-  }
-  if (filters?.memoryScope === "PERSONA" && filters?.ariaPersonaId) {
-    conditions.push(`"ariaPersonaId" = $${idx++}`);
-    params.push(filters.ariaPersonaId);
-    conditions.push(`"userProfileId" IS NULL`);
-  }
-  if (filters?.memoryScope === "PERSONA_PROFILE") {
-    if (filters?.ariaPersonaId) {
-      conditions.push(`"ariaPersonaId" = $${idx++}`);
-      params.push(filters.ariaPersonaId);
-    }
-    // If ariaPersonaId is omitted, leave unconstrained (don't force IS NULL)
-    if (filters?.userProfileId) {
-      conditions.push(`"userProfileId" = $${idx++}`);
-      params.push(filters.userProfileId);
-    }
-    // If userProfileId is omitted, leave unconstrained (don't force IS NULL)
-  }
   if (filters?.worldId) {
     conditions.push(`"worldId" = $${idx++}`);
     params.push(filters.worldId);
@@ -153,9 +121,6 @@ export async function findSimilarMemories(
       1 - (embedding <=> ${vectorParam}::vector) AS similarity,
       "importanceScore" AS "importanceScore",
       kind,
-      "chatId",
-      "ariaPersonaId",
-      "userProfileId",
       "worldId",
       "createdAt"
     FROM memories
@@ -180,11 +145,7 @@ export async function hybridMemorySearch(
   userId: string,
   limit: number = 20,
   filters?: {
-    chatId?: string;
-    ariaPersonaId?: string;
-    userProfileId?: string;
     worldId?: string;
-    memoryScope?: "GLOBAL" | "PERSONA" | "PERSONA_PROFILE";
     embeddingModel?: string;
   },
   weights?: {
@@ -401,14 +362,12 @@ export async function hybridSearch(
     const ageMs = now - new Date(c.createdAt).getTime();
     const recencyScore = Math.max(0, 1 - ageMs / maxAgeMs);
 
-    // Anti-self-echo penalty: passages created within the last 90 minutes are from the
-    // current session. Scoring them at full similarity means the LLM's own recent output
-    // immediately becomes its top context and gets echoed back. Apply a 0.25 penalty to
-    // very-recent passages so established earlier context can compete.
-    const isVeryRecentRpPassage = (c as any).type === "passage" && ageMs < 90 * 60 * 1000;
-    const selfEchoPenalty = isVeryRecentRpPassage ? 0.25 : 0;
-
-    const hybridScore = wSim * c.similarity + wImp * normalizedImportance + wRec * recencyScore - selfEchoPenalty;
+    // NOTE: Aria applied a 0.25 penalty here to passages newer than 90 minutes, so a roleplay
+    // model wouldn't immediately retrieve and echo back its own last output. That heuristic is
+    // backwards for worldbrain: a decision recorded twenty minutes ago in another tool is the
+    // single most valuable thing to surface when you pick the work up here. Penalising it
+    // suppressed exactly the hand-off this system exists to make work. Removed deliberately.
+    const hybridScore = wSim * c.similarity + wImp * normalizedImportance + wRec * recencyScore;
 
     return { ...c, hybridScore };
   });

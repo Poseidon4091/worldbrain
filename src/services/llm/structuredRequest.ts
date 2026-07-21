@@ -220,8 +220,6 @@ export const buildSystemPrompt = (base: string | null | undefined, suffixLines: 
 };
 
 export type PromptContextInput = {
-  userProfile?: { name?: string | null; description?: string | null } | null;
-  ariaPersona?: { name?: string | null; summary?: string | null; content?: string | null } | null;
   conversationTokens?: number;
   messageCount?: number;
 };
@@ -233,18 +231,6 @@ export const buildPromptContextBlocks = (input: PromptContextInput) => {
     if (input.conversationTokens) metaLines.push(`Approximate tokens: ${input.conversationTokens}`);
     if (input.messageCount) metaLines.push(`Message count: ${input.messageCount}`);
     blocks.push(`<conversationContext>\n${metaLines.join("\n")}\n</conversationContext>`);
-  }
-
-  if (input.userProfile?.name) {
-    const nameLine = `The user's name is ${input.userProfile.name}.`;
-    const description = input.userProfile.description?.trim();
-    const content = description ? `${nameLine}\n\n${description}` : nameLine;
-    blocks.push(`<userProfile>\n${content}\n</userProfile>`);
-  }
-  const ariaPersonaText = input.ariaPersona?.summary?.trim() || input.ariaPersona?.content?.trim() || "";
-  if (ariaPersonaText) {
-    const nameLine = input.ariaPersona?.name ? `Name: ${input.ariaPersona.name}\n\n` : "";
-    blocks.push(`<ariaCharacter>\n${nameLine}${ariaPersonaText}\n</ariaCharacter>`);
   }
   return blocks;
 };
@@ -299,7 +285,6 @@ export function formatMemoryXml(memory: MemoryForXml, indent: number, options?: 
 export function formatMemoriesAsXml(
   inScope: MemoryForXml[],
   outOfScope: MemoryForXml[],
-  _memoryScope: "GLOBAL" | "PERSONA" | "PERSONA_PROFILE",
   currentChatId?: string,
 ): string {
   const fromThisChat = currentChatId ? inScope.filter((m) => m.chatId === currentChatId) : [];

@@ -21,9 +21,6 @@ export interface WorldEntity {
   /** Alternate names / nicknames this entity is referred to by (e.g. "Mione" for Hermione).
    *  Used by mention detection + DCI so a nickname resurfaces the canonical entity. */
   aliases?: string[];
-  /** Exposure log: things this character has already experienced (e.g. "muggle_tech:soda_fountain").
-   *  Injected so they react with familiarity instead of first-time wonder on repeat encounters. */
-  exposure_tags?: string[];
   /** Extraction sequence at which this entity was last active (mentioned/updated/present).
    *  Populated by lifecycle.stampRecency. Consumed by the bounded-memory lifecycle
    *  (chronology rollup / entity dormancy) to decide what has gone cold. */
@@ -301,26 +298,6 @@ function mergeAliases(current: string[] = [], incoming: string[] = [], canonical
 }
 
 /**
- * Unions exposure-log tags across extractions. Exposures accumulate (a character never
- * "un-experiences" something), so this is a straight case-insensitive union with a generous
- * cap; when over the cap the OLDEST are dropped (a character's most recent experiences are
- * the ones most likely to still shape their reactions).
- */
-function mergeExposureTags(current: string[] = [], incoming: string[] = []): string[] {
-  const EXPOSURE_CAP = 40;
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const tag of [...current, ...incoming]) {
-    const normalized = (tag ?? "").toLowerCase().trim();
-    if (normalized && !seen.has(normalized)) {
-      seen.add(normalized);
-      out.push(tag.trim());
-    }
-  }
-  return out.length > EXPOSURE_CAP ? out.slice(out.length - EXPOSURE_CAP) : out;
-}
-
-/**
  * Finds an existing relationship key that fuzzy-matches the incoming key.
  * Handles: "Ron Weasley" vs "Ronald Bilius Weasley", "Hermione Jean Granger" vs "Hermione Jean Granger (5th Year)", etc.
  * Returns the canonical existing key, or null if no match.
@@ -552,22 +529,12 @@ function mergeEntities(
       if (incomingStatus?.toLowerCase().startsWith("add,")) incomingStatus = incomingStatus.slice(4).trim();
       if (incomingStatus?.toLowerCase().startsWith("update,")) incomingStatus = incomingStatus.slice(7).trim();
 
-      // Death is irreversible — never let a subsequent extraction pass resurrect a character.
-      // Flashback passages or alive-Fred passages can fool the LLM into overwriting "Deceased".
-      if (
-        /\b(dead|deceased|killed|died)\b/i.test(current.status ?? "") &&
-        !/\b(dead|deceased|killed|died)\b/i.test(incomingStatus ?? "")
-      ) {
-        incomingStatus = current.status;
-      }
-
       merged[idx] = {
         name: current.name,
         blurb: enforceFixedBlocks(current.blurb, incomingBlurb),
         status: incomingStatus,
         tags: mergeTags(current.tags, delta.tags),
         aliases: mergeAliases(current.aliases, delta.aliases, current.name),
-        exposure_tags: mergeExposureTags(current.exposure_tags, delta.exposure_tags),
         traits: newTraits,
         tombstonedTraits: current.tombstonedTraits, // Always carry forward — user intent is permanent
         relationships: cleanRelationships(current.relationships, delta.relationships),
@@ -604,20 +571,12 @@ function mergeEntities(
       if (incomingStatus?.toLowerCase().startsWith("add,")) incomingStatus = incomingStatus.slice(4).trim();
       if (incomingStatus?.toLowerCase().startsWith("update,")) incomingStatus = incomingStatus.slice(7).trim();
 
-      if (
-        /\b(dead|deceased|killed|died)\b/i.test(current.status ?? "") &&
-        !/\b(dead|deceased|killed|died)\b/i.test(incomingStatus ?? "")
-      ) {
-        incomingStatus = current.status;
-      }
-
       merged[idx] = {
         name: current.name,
         blurb: enforceFixedBlocks(current.blurb, incomingBlurb),
         status: incomingStatus,
         tags: mergeTags(current.tags, entity.tags),
         aliases: mergeAliases(current.aliases, entity.aliases, current.name),
-        exposure_tags: mergeExposureTags(current.exposure_tags, entity.exposure_tags),
         traits: newTraits,
         tombstonedTraits: current.tombstonedTraits, // Always carry forward — user intent is permanent
         importance: promoteImportance(current.importance, entity.importance),
@@ -704,7 +663,6 @@ function mergeEntities(
       status: canonical.status ?? duplicate.status,
       tags: mergeTags(canonical.tags, duplicate.tags),
       aliases: mergeAliases(canonical.aliases, duplicate.aliases, canonical.name),
-      exposure_tags: mergeExposureTags(canonical.exposure_tags, duplicate.exposure_tags),
       traits: cleanTraits(canonical.traits, duplicate.traits),
       relationships: cleanRelationships(canonical.relationships, duplicate.relationships),
       witnessed_facts: Array.from(

@@ -1,7 +1,7 @@
 // worldbrain — persistent world/context store.
-// Ported from Aria's world subsystem, with all cross-model coupling (User, Chat, ChatGraph,
-// GraphLorebookRef, ChatSummary, LorebookSource, Message, MemoryEvent) stripped. Foreign-key
-// columns are kept as plain strings so callers can attach their own ownership/scoping model.
+// Originally extracted from Aria's lorebook subsystem; all chat-app coupling (User, Chat,
+// ChatGraph, ChatSummary, Message, personas) has been stripped. External anchor columns are plain
+// strings so no chat/transcript store is implied.
 
 generator client {
   provider        = "prisma-client-js"
@@ -37,13 +37,13 @@ model Settings {
   @@map("settings")
 }
 
-/// A world / world: the top-level container for a persistent context store.
+/// A book: one persistent context store, typically one per project.
 model World {
-  id          String   @id @default(uuid())
-  userId      String
-  title       String
-  group       String?  @map("group_name")
-  tags        String[] @default([])
+  id         String   @id @default(uuid())
+  userId     String
+  title      String
+  group      String?  @map("group_name")
+  tags       String[] @default([])
   /// Locks the book against agent writes. Defaults FALSE: worldbrain's whole premise is that any
   /// connected tool can contribute, not just whoever created the book. Set true only for imported
   /// material you want treated as canon (a spec, a vendor doc) that agents may read but not edit.
@@ -51,15 +51,12 @@ model World {
   /// Enforced in worldWrite.applyDeltaTransactional. Was `isReference` when ported from Aria, where
   /// the equivalent check lived in the chat pipeline — which the port stripped, leaving the column
   /// silently unenforced.
-  readOnly    Boolean  @default(false)
+  readOnly   Boolean  @default(false)
   // When true: entries only inject when their tags are explicitly mentioned (tag-gated).
-  tagGated    Boolean  @default(false)
-  checkpoint  Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Free-form origin pointer (was ChatGraph relation in Aria).
-  sourceRef String? @unique
+  tagGated   Boolean  @default(false)
+  checkpoint Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   items       WorldItem[]
   checkpoints WorldCheckpoint[]
@@ -69,16 +66,18 @@ model World {
   @@map("worlds")
 }
 
-/// Relational, embeddable projection of a world's checkpoint entities (+ passages/canon).
+/// Relational, embeddable projection of a book's checkpoint entities (+ passages).
 model WorldItem {
-  id              String @id @default(uuid())
-  worldId      String
-  world        World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  id              String  @id @default(uuid())
+  worldId         String
+  world           World   @relation(fields: [worldId], references: [id], onDelete: Cascade)
   sourceId        String?
   key             String // entity name / stable key
+  // Storage bucket. Names are narrative in origin; the extraction prompt maps project
+  // vocabulary onto them (component/area/resource/decision/event) — see prompt/constants.ts.
   type            String // character, location, item, knowledge, event, passage, chronology, ...
   content         String // stringified rich content
-  importanceScore Float  @default(1.0)
+  importanceScore Float   @default(1.0)
 
   // Canon position for temporally-gated retrieval.
   canonBook    Int?
@@ -97,30 +96,33 @@ model WorldItem {
   @@map("world_items")
 }
 
-/// Point-in-time snapshot of a world's checkpoint JSON, keyed to an external message/event id.
+/// Point-in-time snapshot of a book's checkpoint JSON, keyed to an external anchor id.
 model WorldCheckpoint {
-  id         String   @id @default(uuid())
-  worldId String
-  world   World @relation(fields: [worldId], references: [id], onDelete: Cascade)
-  messageId  String // external anchor id (no Message relation in worldbrain)
-  data       Json
-  summary    String?
-  createdAt  DateTime @default(now())
+  id        String   @id @default(uuid())
+  worldId   String
+  world     World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  messageId String // external anchor id (no Message relation in worldbrain)
+  data      Json
+  summary   String?
+  createdAt DateTime @default(now())
 
   @@index([worldId])
   @@index([messageId])
   @@map("world_checkpoints")
 }
 
-/// Durable RAG memory facts. Retained for the ingest's memory-delta output + vector search.
+/// Durable standalone facts produced by the ingest's memory delta, retrievable by vector search.
+/// Distinct from World entities: a Memory is a free-standing statement, not a card about a named
+/// thing.
+///
+/// Aria's persona/chat scoping columns (chatId, userProfileId, ariaPersonaId, isRoleplay, nsfw)
+/// were removed — worldbrain has no personas or chats, nothing ever set them, and the matching
+/// `memoryScope` query branch in findSimilarMemories was dead code.
 model Memory {
   id               String    @id @default(uuid())
   userId           String
-  chatId           String?
-  userProfileId    String?
-  ariaPersonaId    String?
-  worldId       String?
-  world         World? @relation(fields: [worldId], references: [id])
+  worldId          String?
+  world            World?    @relation(fields: [worldId], references: [id])
   kind             String    @default("fact")
   status           String    @default("ACCEPTED")
   content          String
@@ -130,8 +132,6 @@ model Memory {
   actualTags       Json      @default("[]")
   suggestedTags    Json      @default("[]")
   enabled          Boolean   @default(true)
-  nsfw             Boolean   @default(false)
-  isRoleplay       Boolean   @default(false)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   deletedAt        DateTime?
@@ -148,7 +148,6 @@ model Memory {
 
   @@index([userId, kind])
   @@index([userId, status])
-  @@index([chatId])
   @@index([worldId])
   @@map("memories")
 }

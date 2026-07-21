@@ -25,7 +25,7 @@ export {
   dciAugmentRetrievedItems,
   dciLookupByNames,
   extractMentionedEntities,
-  formatEntitiesForLibrarian,
+  formatEntitiesForExtraction,
   nameAppearsInText,
   phraseAppearsInText,
   tagAppearsInText,
@@ -57,7 +57,7 @@ export { syncPassages, getPassageWatermark, type TranscriptMessage } from "./ser
 export { applyRetrievalFeedback } from "./services/world/retrievalFeedback.js";
 
 // ── Self-updating ingest (LLM extraction → delta) ────────────────────────────
-export { extractNarrativeDelta } from "./services/intelligence/narrativeIntelligence.js";
+export { extractDelta } from "./services/intelligence/extraction.js";
 export { unifiedExtractionSchema, type UnifiedExtractionResult } from "./services/intelligence/types.js";
 
 // ── Embedding client ─────────────────────────────────────────────────────────

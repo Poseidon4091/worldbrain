@@ -4,7 +4,7 @@ import { z } from "zod";
 import { env } from "../env.js";
 import { embedText } from "../services/embedding/index.js";
 import { hybridSearch, type SimilarWorldItem, tagGatedSearch } from "../services/embedding/vectorSearch.js";
-import { extractNarrativeDelta } from "../services/intelligence/narrativeIntelligence.js";
+import { extractDelta } from "../services/intelligence/extraction.js";
 import { dciLookupByNames, extractMentionedEntities, tagAppearsInText } from "../services/world/dciSearch.js";
 import type { WorldCheckpoint, WorldDelta } from "../services/world/merge.js";
 import { createWorldService } from "../services/world/worldService.js";
@@ -410,7 +410,7 @@ export function createMcpServer(db: PrismaClient): McpServer {
       // Reuse the existing extraction pass rather than asking the calling LLM to hand-author a
       // valid delta — that would spend its attention on schema compliance, and this pipeline is
       // already tuned for exactly this job.
-      const extraction = await extractNarrativeDelta({
+      const extraction = await extractDelta({
         router: settings.llmRouter as RouterType,
         model: settings.llmModel ?? "gpt-4o-mini",
         conversation: text,

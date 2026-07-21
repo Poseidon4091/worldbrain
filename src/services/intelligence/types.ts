@@ -2,8 +2,6 @@ import { z } from "zod";
 import {
   ALIAS_MAX_CHARS,
   ALIASES_MAX_COUNT,
-  EXPOSURE_TAG_MAX_CHARS,
-  EXPOSURE_TAGS_MAX_COUNT,
   RELATIONSHIP_VALUE_MAX_CHARS,
   TRAIT_MAX_CHARS,
   TRAITS_MAX_COUNT,
@@ -72,10 +70,6 @@ export const intelligenceEntitySchema = z
       .array(z.string())
       .transform(hygieneFilter("aliases", ALIAS_MAX_CHARS, ALIASES_MAX_COUNT))
       .default([]),
-    exposure_tags: z
-      .array(z.string())
-      .transform(hygieneFilter("exposure_tags", EXPOSURE_TAG_MAX_CHARS, EXPOSURE_TAGS_MAX_COUNT))
-      .default([]),
     fixedContent: z.string().optional(), // Immutable Core Card — only written on initial entry creation
     entity_type: z.string().optional(),
     type: z.string().optional(),
@@ -83,50 +77,47 @@ export const intelligenceEntitySchema = z
     durability: z.enum(["ephemeral", "stable"]).default("stable"),
   })
   .transform((data) => {
-    const rawType = (data.entity_type ?? data.type ?? "character").toLowerCase();
+    const rawType = (data.entity_type ?? data.type ?? "component").toLowerCase();
 
+    // Maps whatever word the model used onto one of five storage buckets. The bucket names are
+    // narrative (inherited from the merge engine) but the vocabulary is now technical, so both
+    // sets of aliases are matched. Order matters: the first hit wins, so more specific technical
+    // words are checked before generic narrative ones.
+    //
+    // Matching is substring-based, so a missing alias does not error — it silently falls through
+    // to `component`, dumping everything into one bucket. Add new vocabulary here, not just to
+    // the prompt.
     let mappedType: "character" | "location" | "item" | "knowledge" | "event" = "character";
-    if (rawType.includes("char") || rawType.includes("person") || rawType.includes("actor")) mappedType = "character";
+
+    const hasAny = (...needles: string[]) => needles.some((n) => rawType.includes(n));
+
+    if (
+      // Technical: things that act or are acted upon — services, modules, teams, people.
+      hasAny("component", "service", "module", "package", "library", "agent", "team", "person", "actor", "char")
+    )
+      mappedType = "character";
     else if (
-      rawType.includes("loc") ||
-      rawType.includes("place") ||
-      rawType.includes("room") ||
-      rawType.includes("area") ||
-      rawType.includes("site") ||
-      rawType.includes("venue") ||
-      rawType.includes("setting") ||
-      rawType.includes("build") ||
-      rawType.includes("region") ||
-      rawType.includes("district") ||
-      rawType.includes("landmark") ||
-      rawType.includes("structure") ||
-      rawType.includes("world") ||
-      rawType.includes("realm")
+      // Technical: where things live — subsystems, directories, environments, repos.
+      hasAny("area", "subsystem", "director", "environment", "repo", "layer", "domain", "zone") ||
+      hasAny("loc", "place", "room", "site", "venue", "setting", "build", "region", "district", "landmark", "structure", "world", "realm")
     )
       mappedType = "location";
     else if (
-      rawType.includes("item") ||
-      rawType.includes("object") ||
-      rawType.includes("thing") ||
-      rawType.includes("artifact") ||
-      rawType.includes("prop")
+      // Technical: concrete artifacts — files, endpoints, dependencies, tools, datasets.
+      hasAny("resource", "file", "endpoint", "route", "api", "dependency", "tool", "dataset", "table", "asset", "config") ||
+      hasAny("item", "object", "thing", "artifact", "prop")
     )
       mappedType = "item";
     else if (
-      rawType.includes("know") ||
-      rawType.includes("research") ||
-      rawType.includes("fact") ||
-      rawType.includes("lore") ||
-      rawType.includes("spell") ||
-      rawType.includes("rule")
+      // Technical: things that are true — decisions, conventions, specs, docs.
+      hasAny("decision", "convention", "standard", "pattern", "spec", "doc", "constraint", "requirement") ||
+      hasAny("know", "research", "fact", "lore", "spell", "rule")
     )
       mappedType = "knowledge";
     else if (
-      rawType.includes("event") ||
-      rawType.includes("beat") ||
-      rawType.includes("occur") ||
-      rawType.includes("incident") ||
-      rawType.includes("scene")
+      // Technical: things that happened — incidents, releases, migrations, outages.
+      hasAny("release", "migration", "deploy", "outage", "change") ||
+      hasAny("event", "beat", "occur", "incident", "scene")
     )
       mappedType = "event";
 

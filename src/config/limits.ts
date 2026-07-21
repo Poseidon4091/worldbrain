@@ -29,8 +29,3 @@ export const ALIAS_MAX_CHARS = 60;
 /** Max aliases retained per entity. */
 export const ALIASES_MAX_COUNT = 12;
 
-/** Max chars for a single exposure tag (e.g. "muggle_tech:soda_fountain"). */
-export const EXPOSURE_TAG_MAX_CHARS = 80;
-
-/** Max exposure tags retained per entity. */
-export const EXPOSURE_TAGS_MAX_COUNT = 40;

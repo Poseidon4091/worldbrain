@@ -252,7 +252,7 @@ export function nameAppearsInText(name: string, text: string): boolean {
 
 /**
  * Identifies world entities whose names (or aliases/nicknames) appear in the given text
- * as standalone words. Used to determine which entities deserve full detail in the Librarian
+ * as standalone words. Used to determine which entities deserve full detail in the extractor
  * context, to drive DCI resurfacing, and to refresh recency.
  *
  * Matches on the canonical name OR any alias, but always reports the CANONICAL name — so a
@@ -285,18 +285,18 @@ export function extractMentionedEntities(text: string, checkpoint: any): Array<{
 }
 
 /**
- * Formats world entities for the Librarian system prompt with DCI-aware prioritization.
+ * Formats world entities for the extractor system prompt with DCI-aware prioritization.
  *
  * Strategy:
  *   - Core entities → always rendered in full (they always matter)
  *   - Entities mentioned in this conversation turn → rendered in full
  *   - Everything else → brief one-liner (name + type + importance)
  *
- * This eliminates the hard 10,000-char truncation. The Librarian gets complete data
+ * This eliminates the hard 10,000-char truncation. The extractor gets complete data
  * for entities relevant to this extraction turn and lightweight stubs for the rest,
  * so nothing falls off the edge of a character limit.
  */
-export function formatEntitiesForLibrarian(checkpoint: any, mentionedNames: Set<string>): string {
+export function formatEntitiesForExtraction(checkpoint: any, mentionedNames: Set<string>): string {
   if (!checkpoint) return "None yet";
 
   const lines: string[] = [];
