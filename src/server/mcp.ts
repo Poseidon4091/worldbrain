@@ -3,9 +3,9 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { env } from "../env.js";
 import { embedText } from "../services/embedding/index.js";
-import { hybridSearch, type SimilarWorldItem } from "../services/embedding/vectorSearch.js";
+import { hybridSearch, type SimilarWorldItem, tagGatedSearch } from "../services/embedding/vectorSearch.js";
 import { extractNarrativeDelta } from "../services/intelligence/narrativeIntelligence.js";
-import { dciLookupByNames } from "../services/world/dciSearch.js";
+import { dciLookupByNames, extractMentionedEntities, tagAppearsInText } from "../services/world/dciSearch.js";
 import type { WorldCheckpoint, WorldDelta } from "../services/world/merge.js";
 import { createWorldService } from "../services/world/worldService.js";
 import { applyDeltaTransactional } from "../services/world/worldWrite.js";
@@ -64,9 +64,14 @@ export function createMcpServer(db: PrismaClient): McpServer {
     { name: "worldbrain", version: "0.1.0" },
     {
       instructions:
-        "worldbrain is a shared persistent context store. Search it before assuming you lack " +
-        "background on a topic, and use world_remember to record durable facts so other tools " +
-        "you switch to later start with the same context.",
+        "worldbrain is a shared context store holding one book per project, read and written by " +
+        "every AI tool the user works with.\n\n" +
+        "Call world_context with the user's request BEFORE starting a task — it is cheap and tells " +
+        "you what has already been established (conventions, prior decisions, architecture) so you " +
+        "don't contradict work done in another tool.\n\n" +
+        "When you learn something durable — a decision, a convention, how a subsystem works — record " +
+        "it with world_remember. The user will pick this up in a different tool later, and anything " +
+        "you don't record is lost at the end of this session.",
     },
   );
 
@@ -117,6 +122,44 @@ export function createMcpServer(db: PrismaClient): McpServer {
         .map((r) => `- ${r.title} (id: ${r.id})${r.tags.length ? ` [${r.tags.join(", ")}]` : ""}`)
         .join("\n");
       return textResult(text, { worlds: rows });
+    },
+  );
+
+  // ── world_create ───────────────────────────────────────────────────────────
+  server.registerTool(
+    "world_create",
+    {
+      title: "Create a project book",
+      description:
+        "Create a new book — typically one per project. Give it tags that name the project and its " +
+        "aliases (repo name, product name, shorthand the user actually says), because those are what " +
+        "world_context matches against to decide the book is relevant.",
+      inputSchema: {
+        title: z.string().min(1).describe("Project name, e.g. 'Home Assistant App'."),
+        tags: z
+          .array(z.string())
+          .default([])
+          .describe("Trigger words: project name, repo name, nicknames the user uses for it."),
+        tagGated: z
+          .boolean()
+          .default(false)
+          .describe("If true, this book stays silent unless one of its tags is explicitly named."),
+        readOnly: z
+          .boolean()
+          .default(false)
+          .describe("If true, agents may read but never write. For imported specs treated as canon."),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    async ({ title, tags, tagGated, readOnly }) => {
+      const world = await worlds.create(userId, { title, tags, tagGated, readOnly });
+      return textResult(`Created book "${title}" (id: ${world.id}).`, {
+        worldId: world.id,
+        title,
+        tags,
+        tagGated,
+        readOnly,
+      });
     },
   );
 
@@ -251,6 +294,95 @@ export function createMcpServer(db: PrismaClient): McpServer {
         coreCast: core.map((c) => ({ name: c.name, blurb: c.blurb })),
         worldLaws: cp.world_laws ?? [],
       });
+    },
+  );
+
+  // ── world_context ──────────────────────────────────────────────────────────
+  server.registerTool(
+    "world_context",
+    {
+      title: "Get relevant context for what you're working on",
+      description:
+        "Call this FIRST, before starting any task. Pass the user's request verbatim; it returns " +
+        "everything already known that is relevant — project conventions, prior decisions, entities " +
+        "mentioned by name — across every project book. Cheap and fast: it matches names and tags " +
+        "literally rather than embedding the query, so there is no reason not to call it every time.",
+      inputSchema: {
+        text: z.string().min(1).describe("The request or task text to find relevant context for."),
+        semantic: z
+          .boolean()
+          .default(false)
+          .describe("Also run semantic search. Broader recall, but costs an embedding call."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ text, semantic }) => {
+      const all = await worlds.list(userId);
+      if (all.length === 0) return textResult("No project books exist yet.");
+
+      const sections: string[] = [];
+      const structured: Array<{ worldId: string; title: string; trigger: string; items: unknown[] }> = [];
+
+      for (const world of all) {
+        const cp = (world.checkpoint as WorldCheckpoint | null) ?? ({} as WorldCheckpoint);
+
+        // A tag-gated book is opt-in: it stays silent until something it declares is named. That
+        // is the point of the mode — a book of conventions for one project shouldn't bleed into
+        // unrelated work just because the wording looks vaguely similar.
+        if (world.tagGated) {
+          const hits = await tagGatedSearch(db, text, world);
+          if (hits.length === 0) continue;
+          sections.push(`# ${world.title} (tag match)\n${hits.map(renderItem).join("\n\n")}`);
+          structured.push({ worldId: world.id, title: world.title, trigger: "tag", items: hits });
+          continue;
+        }
+
+        // An untagged book contributes whichever of its entities are actually named in the text.
+        const mentioned = extractMentionedEntities(text, cp);
+        // The book's own title/tags being named means the whole project is under discussion, so
+        // its core entities are relevant even when none of them were individually named.
+        const bookNamed =
+          tagAppearsInText(world.title, text) || world.tags.some((t) => t.trim() && tagAppearsInText(t, text));
+
+        const names = mentioned.map((m) => m.name);
+        if (bookNamed) {
+          names.push(...(cp.characters ?? []).filter((c) => c.importance === "core").map((c) => c.name));
+        }
+        if (names.length === 0) continue;
+
+        const hits = await dciLookupByNames(db, [world.id], names);
+        if (hits.length === 0) continue;
+
+        const trigger = bookNamed ? "book named" : "entity mentioned";
+        sections.push(`# ${world.title} (${trigger})\n${hits.map(renderItem).join("\n\n")}`);
+        structured.push({ worldId: world.id, title: world.title, trigger, items: hits });
+      }
+
+      // Opt-in semantic pass, for when literal matching finds nothing but related context exists.
+      if (semantic) {
+        const settings = await getSettings(db);
+        if (settings.embeddingEnabled) {
+          const { embedding, model } = await embedText(
+            text,
+            settings.embeddingRouter,
+            settings.embeddingModel,
+            "query",
+          );
+          // Tag-gated books are excluded on purpose: letting semantic similarity open them would
+          // defeat the gate they were configured with.
+          const openIds = all.filter((w) => !w.tagGated).map((w) => w.id);
+          const hits = await hybridSearch(db, embedding, userId, openIds, 10, undefined, null, model);
+          if (hits.length > 0) {
+            sections.push(`# Semantically related\n${hits.map(renderItem).join("\n\n")}`);
+            structured.push({ worldId: "", title: "Semantically related", trigger: "semantic", items: hits });
+          }
+        }
+      }
+
+      if (sections.length === 0) {
+        return textResult("Nothing relevant found. Proceed, and consider recording what you learn.");
+      }
+      return textResult(sections.join("\n\n"), { context: structured });
     },
   );
 

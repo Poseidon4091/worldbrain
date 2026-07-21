@@ -115,8 +115,8 @@ export async function applyDeltaTransactional(
 
     // FOR UPDATE is the whole point: it blocks any other writer for this world until we commit,
     // so the checkpoint we merge onto is guaranteed to still be current when we write it back.
-    const rows = await tx.$queryRaw<Array<{ id: string; userId: string; checkpoint: unknown }>>(
-      Prisma.sql`SELECT id, "userId", checkpoint FROM worlds WHERE id = ${worldId} FOR UPDATE`,
+    const rows = await tx.$queryRaw<Array<{ id: string; userId: string; readOnly: boolean; checkpoint: unknown }>>(
+      Prisma.sql`SELECT id, "userId", "readOnly", checkpoint FROM worlds WHERE id = ${worldId} FOR UPDATE`,
     );
 
     const row = rows[0];
@@ -124,6 +124,12 @@ export async function applyDeltaTransactional(
     // Ownership is checked inside the transaction, against the locked row — checking it before
     // the lock would race with a concurrent ownership change.
     if (row.userId !== userId) throw new Error(`World not found: ${worldId}`);
+    // Likewise read against the locked row, so a book locked concurrently can't be written by a
+    // writer that read the flag a moment earlier. Books are writable by ANY connected agent by
+    // default; this only rejects ones explicitly marked read-only.
+    if (row.readOnly) {
+      throw new Error(`World "${worldId}" is marked read-only and cannot be modified.`);
+    }
 
     const base = (row.checkpoint as WorldCheckpoint | null) ?? EMPTY_CHECKPOINT;
     const seq = nextExtractionSeq(base);

@@ -18,14 +18,14 @@ export function createWorldService(db: PrismaClient) {
     return world;
   }
 
-  async function create(userId: string, data: { title: string; group?: string | null; tags?: string[]; isReference?: boolean; tagGated?: boolean }) {
+  async function create(userId: string, data: { title: string; group?: string | null; tags?: string[]; readOnly?: boolean; tagGated?: boolean }) {
     return db.world.create({
       data: {
         userId,
         title: data.title,
         group: data.group ?? null,
         tags: data.tags ?? [],
-        isReference: data.isReference ?? false,
+        readOnly: data.readOnly ?? false,
         tagGated: data.tagGated ?? false,
         checkpoint: { characters: [], locations: [], items: [], rules: [], plot_threads: [], chronology: [], knowledge: [], events: [] },
       },
@@ -48,7 +48,7 @@ export function createWorldService(db: PrismaClient) {
   async function update(
     userId: string,
     worldId: string,
-    data: { title?: string; group?: string | null; tags?: string[]; isReference?: boolean; tagGated?: boolean },
+    data: { title?: string; group?: string | null; tags?: string[]; readOnly?: boolean; tagGated?: boolean },
   ) {
     const world = await get(userId, worldId);
     if (!world) return null;

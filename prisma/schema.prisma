@@ -44,7 +44,14 @@ model World {
   title       String
   group       String?  @map("group_name")
   tags        String[] @default([])
-  isReference Boolean  @default(false)
+  /// Locks the book against agent writes. Defaults FALSE: worldbrain's whole premise is that any
+  /// connected tool can contribute, not just whoever created the book. Set true only for imported
+  /// material you want treated as canon (a spec, a vendor doc) that agents may read but not edit.
+  ///
+  /// Enforced in worldWrite.applyDeltaTransactional. Was `isReference` when ported from Aria, where
+  /// the equivalent check lived in the chat pipeline — which the port stripped, leaving the column
+  /// silently unenforced.
+  readOnly    Boolean  @default(false)
   // When true: entries only inject when their tags are explicitly mentioned (tag-gated).
   tagGated    Boolean  @default(false)
   checkpoint  Json?

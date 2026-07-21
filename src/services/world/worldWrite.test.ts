@@ -77,6 +77,36 @@ describeWithDb("applyDeltaTransactional (requires Postgres)", () => {
     expect((after.checkpoint as any)._extractionSeq).toBe(seqBefore + N);
   });
 
+  it("rejects a write to a read-only book without mutating it", async () => {
+    // Regression guard: readOnly was `isReference` when ported from Aria, where the check lived in
+    // the chat pipeline the port stripped — so the column existed but nothing enforced it. A flag
+    // that silently does nothing is worse than no flag.
+    const locked = await db.world.create({
+      data: { userId, title: "Canon Spec", readOnly: true, checkpoint: { characters: [] } },
+    });
+
+    await expect(
+      applyDeltaTransactional(db, userId, locked.id, entityDelta("Should Not Land"), { skipSync: true }),
+    ).rejects.toThrow(/read-only/i);
+
+    const after = await db.world.findUniqueOrThrow({ where: { id: locked.id } });
+    expect(((after.checkpoint as any).characters ?? []).length).toBe(0);
+  });
+
+  it("allows any agent to write a normal book, not just its creator", async () => {
+    // The multi-writer premise: books are writable by every connected tool by default. Only an
+    // explicit readOnly flag blocks a write — authorship is not a gate.
+    const shared = await db.world.create({
+      data: { userId, title: "Shared Project", checkpoint: { characters: [] } },
+    });
+
+    await applyDeltaTransactional(db, userId, shared.id, entityDelta("From Another Agent"), { skipSync: true });
+
+    const after = await db.world.findUniqueOrThrow({ where: { id: shared.id } });
+    const names = ((after.checkpoint as any).characters ?? []).map((c: any) => c.name);
+    expect(names).toContain("From Another Agent");
+  });
+
   it("rejects a write to another user's world without mutating it", async () => {
     await expect(
       applyDeltaTransactional(db, "someone-else", worldId, entityDelta("Trespasser"), { skipSync: true }),
