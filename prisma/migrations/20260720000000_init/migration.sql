@@ -67,6 +67,33 @@ CREATE TABLE "world_checkpoints" (
 );
 
 -- CreateTable
+CREATE TABLE "sources" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "worldId" TEXT NOT NULL,
+    "type" TEXT NOT NULL,
+    "config" JSONB NOT NULL DEFAULT '{}',
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "lastSyncAt" TIMESTAMP(3),
+    "lastError" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "sources_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "source_documents" (
+    "id" TEXT NOT NULL,
+    "sourceId" TEXT NOT NULL,
+    "externalId" TEXT NOT NULL,
+    "contentHash" TEXT NOT NULL,
+    "ingestedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "source_documents_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "memories" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
@@ -114,6 +141,15 @@ CREATE INDEX "world_checkpoints_worldId_idx" ON "world_checkpoints"("worldId");
 CREATE INDEX "world_checkpoints_messageId_idx" ON "world_checkpoints"("messageId");
 
 -- CreateIndex
+CREATE INDEX "sources_userId_idx" ON "sources"("userId");
+
+-- CreateIndex
+CREATE INDEX "sources_worldId_idx" ON "sources"("worldId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "source_documents_sourceId_externalId_key" ON "source_documents"("sourceId", "externalId");
+
+-- CreateIndex
 CREATE INDEX "memories_userId_kind_idx" ON "memories"("userId", "kind");
 
 -- CreateIndex
@@ -127,6 +163,12 @@ ALTER TABLE "world_items" ADD CONSTRAINT "world_items_worldId_fkey" FOREIGN KEY 
 
 -- AddForeignKey
 ALTER TABLE "world_checkpoints" ADD CONSTRAINT "world_checkpoints_worldId_fkey" FOREIGN KEY ("worldId") REFERENCES "worlds"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "sources" ADD CONSTRAINT "sources_worldId_fkey" FOREIGN KEY ("worldId") REFERENCES "worlds"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "source_documents" ADD CONSTRAINT "source_documents_sourceId_fkey" FOREIGN KEY ("sourceId") REFERENCES "sources"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "memories" ADD CONSTRAINT "memories_worldId_fkey" FOREIGN KEY ("worldId") REFERENCES "worlds"("id") ON DELETE SET NULL ON UPDATE CASCADE;

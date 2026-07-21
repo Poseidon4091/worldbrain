@@ -61,6 +61,7 @@ model World {
   items       WorldItem[]
   checkpoints WorldCheckpoint[]
   memories    Memory[]
+  sources     Source[]
 
   @@index([userId])
   @@map("worlds")
@@ -109,6 +110,58 @@ model WorldCheckpoint {
   @@index([worldId])
   @@index([messageId])
   @@map("world_checkpoints")
+}
+
+/// Something to ingest from, polled by the background sync worker.
+///
+/// Unabyss's model is connector pull-sync: connect to where the data already lives, extract and
+/// re-sync as it changes, and let clients only read. worldbrain uses the same shape with document
+/// sources instead of work tools.
+model Source {
+  id      String @id @default(uuid())
+  userId  String
+  worldId String
+  world   World  @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  /// "folder" (poll a mounted directory) | "http" (pushed to /ingest, never polled)
+  type   String
+  /// Connector-specific settings, e.g. { "path": "/data/inbox" } for a folder.
+  config Json   @default("{}")
+
+  enabled    Boolean   @default(true)
+  lastSyncAt DateTime?
+  /// Last failure, kept so a broken source is visible instead of silently doing nothing.
+  lastError  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  documents SourceDocument[]
+
+  @@index([userId])
+  @@index([worldId])
+  @@map("sources")
+}
+
+/// Ingest ledger: one row per document seen from a source.
+///
+/// Exists purely for dedupe. Re-polling an unchanged file must be free — without the content
+/// hash every sync pass would re-run extraction over the entire corpus, burning tokens and
+/// re-merging identical deltas on every tick.
+model SourceDocument {
+  id       String @id @default(uuid())
+  sourceId String
+  source   Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  /// Stable identity within the source — a file path, or a caller-supplied id for pushes.
+  externalId  String
+  /// SHA-256 of the content last ingested. Unchanged hash → skip.
+  contentHash String
+
+  ingestedAt DateTime @default(now())
+
+  @@unique([sourceId, externalId])
+  @@map("source_documents")
 }
 
 /// Durable standalone facts produced by the ingest's memory delta, retrievable by vector search.
