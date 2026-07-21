@@ -33,10 +33,11 @@ OpenRouter / OpenAI / any OpenAI-compatible endpoint, configured in the UI.
 
 ## 2. The correctness foundation: transactional writes
 
-**This is the highest-priority piece of work, and it does not currently exist.**
+**BUILT** — `services/world/worldWrite.ts`. Recorded here because the reasoning matters more than
+the code: this was the highest-priority piece of work, and the bug it fixes is invisible.
 
-`00_plan.md` §6 assumes writes go through "`applyLorebookDelta` + the transactional row-locked write
-we hardened." Only the first half was ported. What exists today:
+`00_plan.md` §6 assumed writes go through "`applyLorebookDelta` + the transactional row-locked write
+we hardened." Only the first half was ported. What existed before this work:
 
 - `applyLorebookDelta` (now `applyDelta`) — a **pure** function: `(checkpoint, delta) => checkpoint`.
 - `worldService.saveCheckpoint` — a **plain, unguarded** `UPDATE`.
@@ -83,7 +84,12 @@ Design notes:
 
 Test coverage must include an actual concurrency test (two interleaved transactions against a real
 Postgres), not just a unit test of the merge function — the merge is already correct; the
-*composition* is what breaks.
+*composition* is what breaks. Those tests exist in `worldWrite.test.ts` but **skip without
+`DATABASE_URL` and have never been executed** — see §10.
+
+`readOnly` is enforced in the same transaction, read from the locked row. It was `isReference` when
+ported, where Aria's check lived in the stripped chat pipeline — leaving a column that was written,
+never read, and silently protected nothing.
 
 ## 3. Processes
 
@@ -121,22 +127,34 @@ Read tools are as specified in `00_plan.md` §4 (`worlds.list`, `world.entity`, 
 the deliberate omission of the dormancy/budget filter still applies: MCP returns the full relevant
 slice and the client decides what to use.
 
-Added, and gated on §2 landing first:
+Added (BUILT, in `server/mcp.ts`):
 
 | Tool | Maps to | Notes |
 |---|---|---|
-| `world.remember(worldId, text)` | extract → `applyDeltaTransactional` | The natural write. An agent states what it learned in prose; the extractor structures it. |
-| `world.propose(worldId, delta)` | `applyDeltaTransactional` | Structured write for callers that already have a delta. |
+| `world_context(text)` | tag-gated + DCI mention matching | Not in the original plan, and now the most important tool. See below. |
+| `world_remember(worldId, text)` | extract → `applyDeltaTransactional` | The write. An agent states what it learned in prose; the extractor structures it. |
+| `world_create(title, tags)` | `worldService.create` | Books were previously uncreatable except by writing to the database directly. |
 
-`world.remember` is the important one. Asking a client LLM to hand-author a valid delta wastes its
-attention on schema compliance; letting it narrate and running the existing extraction pass over that
-text reuses the pipeline that is already tuned for exactly this job.
+`world_remember` takes prose rather than a delta deliberately. Asking a client LLM to hand-author a
+schema-valid delta spends its attention on schema compliance; letting it narrate and running the
+existing extraction pass over that text reuses a pipeline already tuned for the job.
 
-**Write safety:** every write is validated against the extraction schema, rate-limited, and passes
-through the same death-tracking / tombstone / `fixedContent` protections as internal writes — those
-live inside the merge, so routing all writes through one path gets them for free.
+`world_context` is the per-project-book primitive: pass the user's request and it matches names and
+tags literally across every book, returning what is already known. It needs no embedding call, so
+it is cheap enough for an agent to call before every task — which is what makes "any mention pulls
+the right book in" work in practice.
 
-## 5. Ingest — the connector model
+**The pull-based constraint.** MCP servers cannot inject context; they only answer when a client
+chooses to call. So "a mention automatically triggers a lookup" is approximated three ways: a cheap
+`world_context` tool, server `instructions` and tool descriptions that tell the agent to call it
+first, and (for genuine automation) a client-side hook such as Claude Code's `UserPromptSubmit`.
+Only the third is truly automatic, and it is client configuration rather than server code.
+
+**Write safety:** every write is validated against the extraction schema and passes through the same
+tombstone / `fixedContent` protections as internal writes — those live inside the merge, so routing
+all writes through one path gets them for free. Rate limiting is not yet implemented.
+
+## 5. Ingest — the connector model  *(BUILT — `services/ingest/`)*
 
 Unabyss's approach is **connector pull-sync**: it connects to the tools where data already lives,
 pulls, extracts, structures, and re-syncs as those sources change. The client AI only ever reads.
@@ -155,7 +173,8 @@ Common machinery for all connectors, so a new one is a small adapter:
 
 - **Content-hash dedupe** — re-syncing an unchanged file must be a no-op, or every poll re-extracts
   and burns tokens.
-- **Watermark per source** — only new content is processed.
+- **Ledger written only after success** — writing it first would mark a failed extraction as
+  done and never retry it.
 - **Extract → merge** through the §2 transactional path, same as MCP writes.
 - **Failure isolation** — one broken source must never stall the others.
 
@@ -193,22 +212,64 @@ jargon.
 
 ## 8. Order of work
 
-1. **Transactional write path** (§2) + a real concurrency test. Everything else writes through it.
-2. **Rename** (§7). Free now; expensive after migrations and more code exist.
-3. **MCP server** — HTTP/SSE, read tools, then `world.remember`.
-4. **stdio shim** — Claude Desktop / Cursor compatibility.
-5. **Connectors** — folder + http, with the shared dedupe/watermark machinery.
-6. **Settings UI + Docker** — compose file with pgvector, plus the raw-SQL migration for the HNSW
-   indexes and the `lower(key)` functional index (see README).
+1. ~~**Transactional write path** (§2)~~ — done, `worldWrite.ts`. Concurrency tests written but
+   never executed (§10).
+2. ~~**Rename** (§7)~~ — done.
+3. ~~**MCP server**~~ — done: streamable HTTP, read tools, `world_context`, `world_remember`.
+4. ~~**stdio shim**~~ — done, `src/stdio.ts`, published as `worldbrain-stdio`.
+5. ~~**Connectors**~~ — done: folder + http push over a shared dedupe/chunk/merge pipeline.
+6. ~~**Settings UI + Docker + migrations**~~ — done, including the HNSW and `lower(key)` indexes.
+7. **Verify against a live database and a real model** — the only remaining step, and the one that
+   matters most (§10).
+
+### Also retargeted from Aria
+
+The engine assumed roleplay. Three things were not merely cosmetic:
+
+- The extraction prompt was a narrative-fiction directive; given a paragraph about database choice
+  it modelled the codebase as story characters. Rewritten for project context.
+- The `entity_type` mapping matched only narrative vocabulary, so technical words fell through to a
+  single bucket. It fails *silently* — a missing alias does not error.
+- An anti-self-echo penalty docked 0.25 from anything under 90 minutes old, so a roleplay model
+  would not echo its own output. Here it suppressed exactly the recent-decision hand-off the system
+  exists for. Removed.
+
+Death tracking, `exposure_tags`, persona/chat scoping and the `memoryScope` query branch were
+removed. Dormancy and tombstones were kept: both earn their place in a book that accumulates for
+years.
 
 ## 9. Known gaps
 
-- **No migrations exist.** `db push` only. The HNSW vector indexes and the `lower(key)` functional
-  index that DCI's exact-match lookup depends on need hand-written SQL; without them both retrieval
-  paths degrade to sequential scans.
 - **`EMBEDDING_DIM` is hardcoded to 1024** and the pgvector column is `vector(1024)`. Switching
   embedding model families in the UI is therefore not actually safe — changing dimension requires a
   column migration and a full re-embed. The UI must either constrain choices to 1024-dim models or
   own that re-embed flow explicitly.
 - **Cross-model embedding contamination** is guarded at query time (`embeddingModel` filter) but
   there is no backfill/re-embed job, so switching models silently strips old rows from results.
+- **No rate limiting on writes.** A misbehaving agent could hammer `world_remember` and burn the
+  extraction budget.
+- **`world_related` and `world_tags`** from `00_plan.md` §4 are not implemented.
+- **M2/M4** — external MCP endpoints as connectors, and cross-world graph traversal — remain
+  unstarted.
+
+## 10. What has and has not been verified
+
+Being explicit, because the gap is easy to lose track of.
+
+**Verified:** typecheck and build clean; 66 unit tests pass; MCP `initialize` and `tools/list`
+answer correctly over HTTP; the stdio bridge proxies all 8 tools and errors properly when the
+daemon is unreachable; the settings UI serves and degrades correctly without a database.
+
+**Not verified — nothing has touched a real database or a real model:**
+
+1. **The concurrency tests have never run.** `SELECT ... FOR UPDATE` semantics need a live
+   Postgres, and the environment this was built in had neither Docker nor Postgres. The row-locked
+   write path is load-bearing for every write, and it is unproven.
+2. **No tool body has executed.** Every tool typechecks; none has run a query.
+3. **Extraction quality is unmeasured.** The new prompt is plausible but unvalidated, and a prompt
+   that reads well while extracting poorly is precisely the failure that survives review. It needs
+   a real paragraph about a real project, with the resulting buckets inspected by hand.
+4. **The folder connector has never polled a real directory.**
+
+First run after deploying should be `npm run db:migrate && npm test` with `DATABASE_URL` set, then a
+manual `world_remember` with real prose.
