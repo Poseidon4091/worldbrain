@@ -71,6 +71,24 @@ Use a **Docker Compose** service type (Stack/Swarm can't `build:`). Set the vari
 file references each one explicitly. Point the Domains tab at the `app` service, port 8080, rather
 than hand-writing Traefik labels.
 
+### Access over Tailscale (no public domain)
+
+worldbrain has **no authentication** — it trusts its network boundary — so it must never be
+exposed on a public interface. The private-network pattern:
+
+1. The compose file publishes the app to `127.0.0.1:8080` only, so it's reachable on the server's
+   loopback but not its public IP.
+2. On the server, expose that port to your tailnet with HTTPS:
+   ```bash
+   tailscale serve --bg 8080
+   ```
+   It becomes reachable at `https://<server>.<tailnet>.ts.net` from any device on your tailnet,
+   and nowhere else. `tailscale serve status` shows the URL.
+3. Set `APP_URL` to that URL, and point MCP clients at `https://<server>.<tailnet>.ts.net/mcp`.
+
+The tailnet is the auth boundary, which is exactly what makes the no-auth design safe. Do **not**
+publish the port on `0.0.0.0` or forward it through a public domain without adding auth first.
+
 ### Local development
 
 ```bash

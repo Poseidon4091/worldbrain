@@ -64,6 +64,15 @@ services:
       # Together, a local vLLM, …). Set LLM_ROUTER=custom to use these.
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
+    # Publish to the LOOPBACK interface only — never 0.0.0.0. worldbrain has no auth (it trusts
+    # its network boundary), so a 0.0.0.0 bind on a server with a public IP would put the MCP
+    # write endpoint on the open internet. 127.0.0.1 keeps it reachable only on the host, where
+    # `tailscale serve` then exposes it to your tailnet (and nowhere else). See README.
+    #
+    # If instead you route through a Dokploy domain + Traefik, delete this `ports` block and use
+    # the Domains tab — Traefik reaches the container over dokploy-network without a host port.
+    ports:
+      - "127.0.0.1:8080:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 15s
